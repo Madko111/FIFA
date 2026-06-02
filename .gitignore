@@ -1,7 +1,17 @@
 .env
+*.env
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 published_posts.json
 bot_settings.json
 post_history.json
 post_categories.json
+kpi_data.json
+user_settings.json
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
