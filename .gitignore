@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+published_posts.json
+bot_settings.json
+post_history.json
+post_categories.json
