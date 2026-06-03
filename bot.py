@@ -248,6 +248,10 @@ def _build_ai_facts():
     lines.append(f"Squad: full official 26-man Uzbekistan World Cup 2026 roster, captain Eldor Shomurodov (#14), head coach Fabio Cannavaro.")
     lines.append(f"Goal: build the largest organized Uzbek fan community for the World Cup 2026 — Uzbekistan's first-ever World Cup.")
     lines.append(f"Website: {WEBSITE_URL}")
+    lines.append("")
+    lines.append("LOCALIZED PROGRAM NAMES (use exactly these when answering — never invent translations):")
+    lines.append("- Volunteer program → Uzbek: 'Volontyorlik' | Russian: 'Волонтёрство' | English: 'Volunteer program'")
+    lines.append("- Founders Davra, Stadium Davra, City Captain, Fan Passport → keep the original names in all languages")
     return "\n".join(lines)
 
 LANG_NAMES = {"uz": "Uzbek", "ru": "Russian", "en": "English"}
