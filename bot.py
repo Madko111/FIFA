@@ -31,6 +31,14 @@ COMMUNITY_CHAT_ID = os.getenv('COMMUNITY_CHAT_ID', CHANNEL_ID)
 ADMIN_USER_IDS = [int(uid.strip()) for uid in os.getenv('ADMIN_USER_ID', '').split(',') if uid.strip()]
 POST_INTERVAL_MINUTES = int(os.getenv('POST_INTERVAL_MINUTES', '30'))
 
+# AI-чат (Gemini сейчас; Claude — позже, после одобрения менеджера)
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')  # запасной провайдер
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite')
+CLAUDE_MODEL = os.getenv('AI_MODEL', 'claude-3-5-haiku-20241022')
+# Активен AI, если задан хотя бы один ключ
+AI_ENABLED = bool(GEMINI_API_KEY or ANTHROPIC_API_KEY)
+
 # Файлы данных
 KPI_DATA_FILE = "kpi_data.json"
 USER_SETTINGS_FILE = "user_settings.json"
@@ -178,6 +186,182 @@ def track_user_interaction(user_id):
     save_kpi_data(data)
 
 # ============================================
+# AI-ЧАТ (Claude)
+# ============================================
+
+# Пользователи, ожидающие ввода вопроса для AI (нажали "Ask AI" в меню)
+_AI_WAITING = set()
+
+# Ленивая инициализация клиентов
+_gemini_client = None
+_anthropic_client = None
+
+def _get_gemini_client():
+    """Возвращает (и кэширует) клиент Gemini, или None если ключ не задан."""
+    global _gemini_client
+    if not GEMINI_API_KEY:
+        return None
+    if _gemini_client is None:
+        try:
+            from google import genai
+            _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        except Exception as e:
+            print(f"⚠️ Gemini klient yaratilmadi: {e}")
+            return None
+    return _gemini_client
+
+def _get_anthropic_client():
+    """Возвращает (и кэширует) клиент Anthropic, или None если ключ не задан."""
+    global _anthropic_client
+    if not ANTHROPIC_API_KEY:
+        return None
+    if _anthropic_client is None:
+        try:
+            import anthropic
+            _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        except Exception as e:
+            print(f"⚠️ Anthropic klient yaratilmadi: {e}")
+            return None
+    return _anthropic_client
+
+def _build_ai_facts():
+    """Собирает актуальные факты о клубе из данных бота для системного промпта."""
+    lines = []
+    lines.append("MATCHES (Uzbekistan, World Cup 2026, Group K):")
+    for m in MATCHES:
+        lines.append(
+            f"- {m['date']} {m['time']} vs {m['opponent']['en']} "
+            f"in {m['city']['en']} ({m['stadium']})"
+        )
+    lines.append("")
+    lines.append("PROGRAMS people can join (registration on the website):")
+    prog_names = {
+        "founders": "Founders Davra (business leaders network)",
+        "stadium": "Stadium Davra (organized stadium fan sections)",
+        "captain": "City Captain (lead the fan community in a city)",
+        "volunteer": "Volunteer program",
+        "passport": "Fan Passport",
+    }
+    for key in PROGRAMS:
+        lines.append(f"- {prog_names.get(key, key)}")
+    lines.append("")
+    lines.append(f"Squad: full official 26-man Uzbekistan World Cup 2026 roster, captain Eldor Shomurodov (#14), head coach Fabio Cannavaro.")
+    lines.append(f"Goal: build the largest organized Uzbek fan community for the World Cup 2026 — Uzbekistan's first-ever World Cup.")
+    lines.append(f"Website: {WEBSITE_URL}")
+    return "\n".join(lines)
+
+LANG_NAMES = {"uz": "Uzbek", "ru": "Russian", "en": "English"}
+
+def _build_ai_system_prompt(lang, is_admin=False):
+    """Системный промпт: тема, тон, язык, отказ от офтопа."""
+    lang_name = LANG_NAMES.get(lang, "English")
+    facts = _build_ai_facts()
+    admin_note = ""
+    if is_admin:
+        data = load_kpi_data()
+        total_users = len(data.get('user_interactions', {}))
+        active_24h = len([
+            u for u, t in data.get('user_interactions', {}).items()
+            if datetime.fromisoformat(t) > datetime.now() - timedelta(days=1)
+        ])
+        admin_note = (
+            "\n\nADMIN MODE: This user is an admin. You may also answer questions about "
+            f"internal community stats. Current bot stats: total tracked users = {total_users}, "
+            f"active in last 24h = {active_24h}. Targets: 10,000 Telegram members, 100+ watch "
+            "parties, 50 city captains, 100 Founders Davra, 20 volunteers."
+        )
+    return (
+        "You are the AI assistant for 'Uzbek World Club', the official Uzbek fan community "
+        "for the FIFA World Cup 2026.\n\n"
+        "STRICT SCOPE: You may ONLY answer questions about (1) Uzbek World Club itself, "
+        "(2) the FIFA World Cup in general, and (3) the FIFA World Cup 2026 (teams, matches, "
+        "schedule, host cities, Uzbekistan's national team). If a question is outside these "
+        "topics, do NOT answer it — instead reply with exactly this sentence (translated to the "
+        f"user's language): 'Sorry, my knowledge base only covers Uzbek World Club, the World "
+        "Cup, and World Cup 2026.'\n\n"
+        f"ALWAYS answer in {lang_name}.\n"
+        "Keep answers SHORT, CLEAR and CONCISE — 1-3 sentences, no fluff.\n"
+        "Use the facts below when relevant. If you don't know a specific fact, say so briefly.\n\n"
+        f"FACTS:\n{facts}"
+        f"{admin_note}"
+    )
+
+# Темо-фильтр для пассивного триггера в группах (грубая проверка ключевых слов)
+AI_TOPIC_KEYWORDS = [
+    "world cup", "worldcup", "fifa", "uzbek", "o'zbek", "узбек", "uzbekistan",
+    "chempionat", "чемпионат", "jch", "чм", "watch party", "davra", "captain",
+    "shomurodov", "cannavaro", "portugal", "colombia", "congo", "match", "matn",
+    "o'yin", "матч", "stadium", "stadion", "стадион", "founders", "volunteer",
+    "volontyor", "волонтёр", "passport", "passportt", "qachon", "когда", "when",
+]
+
+def _looks_on_topic(text):
+    """Грубая эвристика: похоже ли сообщение на наш топик."""
+    t = (text or "").lower()
+    return any(k in t for k in AI_TOPIC_KEYWORDS)
+
+async def _ask_gemini(question, system_prompt):
+    """Запрос к Gemini. Возвращает текст или None."""
+    client = _get_gemini_client()
+    if client is None:
+        return None
+    try:
+        from google.genai import types
+        def _call():
+            return client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=question,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=400,
+                    temperature=0.4,
+                ),
+            )
+        resp = await asyncio.to_thread(_call)
+        answer = (getattr(resp, "text", None) or "").strip()
+        return answer or None
+    except Exception as e:
+        print(f"⚠️ Gemini xatosi: {e}")
+        return None
+
+async def _ask_claude(question, system_prompt):
+    """Запрос к Claude. Возвращает текст или None."""
+    client = _get_anthropic_client()
+    if client is None:
+        return None
+    try:
+        def _call():
+            return client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=400,
+                system=system_prompt,
+                messages=[{"role": "user", "content": question}],
+            )
+        resp = await asyncio.to_thread(_call)
+        parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+        answer = "".join(parts).strip()
+        return answer or None
+    except Exception as e:
+        print(f"⚠️ Claude xatosi: {e}")
+        return None
+
+async def ask_ai(question, lang, is_admin=False):
+    """Короткий тематический ответ. Сначала Gemini, при отсутствии — Claude.
+
+    Возвращает текст или None при ошибке.
+    """
+    system_prompt = _build_ai_system_prompt(lang, is_admin)
+    # Приоритет — Gemini
+    if GEMINI_API_KEY:
+        answer = await _ask_gemini(question, system_prompt)
+        if answer:
+            return answer
+    # Запасной — Claude
+    if ANTHROPIC_API_KEY:
+        return await _ask_claude(question, system_prompt)
+    return None
+
+# ============================================
 # МЕНЮ
 # ============================================
 
@@ -203,6 +387,7 @@ def get_main_menu(lang, is_admin=False):
         ],
         # Длинные подписи — отдельными строками, чтобы текст не обрезался
         [InlineKeyboardButton(get_text(lang, 'schedule'), callback_data="schedule")],
+        [InlineKeyboardButton(get_text(lang, 'ask_ai'), callback_data="ask_ai")],
         [InlineKeyboardButton(get_text(lang, 'join'), callback_data="join_community")],
         [InlineKeyboardButton(get_text(lang, 'settings'), callback_data="settings")],
     ]
@@ -333,6 +518,87 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(schedule_text)
 
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /ask <вопрос> — разовый AI-вопрос."""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    is_admin = user_id in ADMIN_USER_IDS
+
+    question = " ".join(context.args).strip() if context.args else ""
+    if not question:
+        await update.message.reply_text(get_text(lang, 'ask_ai_usage'))
+        return
+
+    await _answer_with_ai(update.message, question, lang, is_admin)
+
+async def _answer_with_ai(message, question, lang, is_admin):
+    """Общий обработчик: показывает 'думаю', спрашивает AI, шлёт ответ или отказ."""
+    if not AI_ENABLED:
+        await message.reply_text(get_text(lang, 'ask_ai_error'))
+        return
+
+    thinking = await message.reply_text(get_text(lang, 'ask_ai_thinking'))
+    answer = await ask_ai(question, lang, is_admin)
+    try:
+        if answer:
+            await thinking.edit_text(answer)
+        else:
+            await thinking.edit_text(get_text(lang, 'ask_ai_error'))
+    except BadRequest:
+        # Если редактирование не удалось — шлём новым сообщением
+        await message.reply_text(answer or get_text(lang, 'ask_ai_error'))
+
+async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Свободный текст: AI-чат.
+
+    Срабатывает если:
+    - пользователь нажал "Ask AI" в меню (режим ожидания), ИЛИ
+    - в личке написал текст, ИЛИ
+    - в группе ответил на сообщение бота, ИЛИ
+    - в группе написал явно на нашу тему (по ключевым словам).
+    """
+    if not update.message or not update.message.text:
+        return
+    text = update.message.text.strip()
+    if not text or text.startswith("/"):
+        return
+
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id) or 'uz'
+    is_admin = user_id in ADMIN_USER_IDS
+    chat_type = update.message.chat.type
+    is_private = chat_type == "private"
+
+    waiting = user_id in _AI_WAITING
+    bot_username = context.bot.username
+    replied_to_bot = (
+        update.message.reply_to_message is not None
+        and update.message.reply_to_message.from_user is not None
+        and update.message.reply_to_message.from_user.is_bot
+    )
+    mentioned = bool(bot_username) and (f"@{bot_username}".lower() in text.lower())
+
+    # Решаем, отвечать ли
+    if is_private:
+        should = waiting or True  # в личке любой текст считаем вопросом
+    else:
+        # В группе — только если позвали бота или похоже на нашу тему
+        should = waiting or replied_to_bot or mentioned or _looks_on_topic(text)
+
+    if not should:
+        return
+
+    # Снимаем режим ожидания после первого вопроса
+    _AI_WAITING.discard(user_id)
+    track_user_interaction(user_id)
+
+    # Убираем упоминание бота из вопроса
+    if mentioned and bot_username:
+        text = text.replace(f"@{bot_username}", "").strip()
+
+    await _answer_with_ai(update.message, text, lang, is_admin)
+
 # ============================================
 # CALLBACK HANDLERS
 # ============================================
@@ -373,6 +639,7 @@ async def _handle_button(query):
     
     # Главное меню
     if query.data == "main_menu":
+        _AI_WAITING.discard(user_id)
         await query.edit_message_text(
             get_text(lang, 'main_menu'),
             reply_markup=get_main_menu(lang, is_admin),
@@ -473,8 +740,18 @@ async def _handle_button(query):
                 reply_markup=get_program_detail_menu(lang, key)
             )
     
+    # AI-чат: включаем режим ожидания вопроса
+    elif query.data == "ask_ai":
+        _AI_WAITING.add(user_id)
+        await query.edit_message_text(
+            get_text(lang, 'ask_ai_prompt'),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'back'), callback_data="main_menu")]]),
+            parse_mode="Markdown"
+        )
+
     # Настройки
     elif query.data == "settings":
+        _AI_WAITING.discard(user_id)
         await query.edit_message_text(
             get_text(lang, 'settings_title'),
             reply_markup=get_settings_menu(lang)
@@ -667,7 +944,14 @@ def main():
     print("🚀 Bot ishga tushmoqda...")
     print(f"📢 Kanal: {CHANNEL_ID}")
     print(f"👥 Adminlar: {len(ADMIN_USER_IDS)}")
-    print(f"🌐 Tillar: O'zbekcha, Русский, English\n")
+    print(f"🌐 Tillar: O'zbekcha, Русский, English")
+    if GEMINI_API_KEY:
+        ai_status = "yoqilgan (Gemini)"
+    elif ANTHROPIC_API_KEY:
+        ai_status = "yoqilgan (Claude)"
+    else:
+        ai_status = "o'chirilgan (API kalit yo'q)"
+    print(f"🤖 AI-chat: {ai_status}\n")
     
     # Создаем приложение
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -675,12 +959,16 @@ def main():
     # Команды
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("schedule", schedule_command))
+    app.add_handler(CommandHandler("ask", ask_command))
     
     # Кнопки
     app.add_handler(CallbackQueryHandler(button_callback))
     
     # Приветствие новых участников
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members))
+
+    # AI-чат: свободный текст (не команды). Регистрируем последним.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     
     # Автопостинг: ежедневный обратный отсчёт в канал
     job_queue = app.job_queue
