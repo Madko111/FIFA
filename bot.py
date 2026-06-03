@@ -281,7 +281,11 @@ def _build_ai_system_prompt(lang, is_admin=False):
         "Cup, and World Cup 2026.'\n\n"
         f"ALWAYS answer in {lang_name}.\n"
         "Keep answers SHORT, CLEAR and CONCISE — 1-3 sentences, no fluff.\n"
-        "Use the facts below when relevant. If you don't know a specific fact, say so briefly.\n\n"
+        "Use the facts below when relevant. If you don't know a specific fact, say so briefly.\n"
+        "WEBSITE LINK RULE: Whenever you mention our website, registration, joining a program, "
+        "or anything that points users to our site, render the URL as a Telegram Markdown link "
+        f"using this exact format: [uzbekworldclub.com]({WEBSITE_URL}). Never paste the raw URL "
+        "as plain text and never use any other anchor text.\n\n"
         f"FACTS:\n{facts}"
         f"{admin_note}"
     )
@@ -540,14 +544,15 @@ async def _answer_with_ai(message, question, lang, is_admin):
 
     thinking = await message.reply_text(get_text(lang, 'ask_ai_thinking'))
     answer = await ask_ai(question, lang, is_admin)
+    final = answer or get_text(lang, 'ask_ai_error')
+    # Сначала пробуем Markdown (ради ссылок [текст](url)). При ошибке парсинга — без форматирования.
     try:
-        if answer:
-            await thinking.edit_text(answer)
-        else:
-            await thinking.edit_text(get_text(lang, 'ask_ai_error'))
+        await thinking.edit_text(final, parse_mode='Markdown', disable_web_page_preview=True)
     except BadRequest:
-        # Если редактирование не удалось — шлём новым сообщением
-        await message.reply_text(answer or get_text(lang, 'ask_ai_error'))
+        try:
+            await thinking.edit_text(final)
+        except BadRequest:
+            await message.reply_text(final)
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Свободный текст: AI-чат.
