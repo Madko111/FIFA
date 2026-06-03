@@ -18,8 +18,8 @@ from telegram.ext import (
 )
 from translations import get_text
 
-# Загружаем .env
-load_dotenv()
+# Загружаем .env (override=True — .env приоритетнее системных переменных окружения)
+load_dotenv(override=True)
 
 # ============================================
 # НАСТРОЙКИ
@@ -35,7 +35,7 @@ POST_INTERVAL_MINUTES = int(os.getenv('POST_INTERVAL_MINUTES', '30'))
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')  # запасной провайдер
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite')
-CLAUDE_MODEL = os.getenv('AI_MODEL', 'claude-3-5-haiku-20241022')
+CLAUDE_MODEL = os.getenv('AI_MODEL', 'claude-haiku-4-5-20251001')
 # Активен AI, если задан хотя бы один ключ
 AI_ENABLED = bool(GEMINI_API_KEY or ANTHROPIC_API_KEY)
 
@@ -346,19 +346,19 @@ async def _ask_claude(question, system_prompt):
         return None
 
 async def ask_ai(question, lang, is_admin=False):
-    """Короткий тематический ответ. Сначала Gemini, при отсутствии — Claude.
+    """Короткий тематический ответ. Сначала Claude, при отсутствии — Gemini.
 
     Возвращает текст или None при ошибке.
     """
     system_prompt = _build_ai_system_prompt(lang, is_admin)
-    # Приоритет — Gemini
-    if GEMINI_API_KEY:
-        answer = await _ask_gemini(question, system_prompt)
+    # Приоритет — Claude
+    if ANTHROPIC_API_KEY:
+        answer = await _ask_claude(question, system_prompt)
         if answer:
             return answer
-    # Запасной — Claude
-    if ANTHROPIC_API_KEY:
-        return await _ask_claude(question, system_prompt)
+    # Запасной — Gemini
+    if GEMINI_API_KEY:
+        return await _ask_gemini(question, system_prompt)
     return None
 
 # ============================================
@@ -945,10 +945,10 @@ def main():
     print(f"📢 Kanal: {CHANNEL_ID}")
     print(f"👥 Adminlar: {len(ADMIN_USER_IDS)}")
     print(f"🌐 Tillar: O'zbekcha, Русский, English")
-    if GEMINI_API_KEY:
+    if ANTHROPIC_API_KEY:
+        ai_status = "yoqilgan (Claude, fallback: Gemini)" if GEMINI_API_KEY else "yoqilgan (Claude)"
+    elif GEMINI_API_KEY:
         ai_status = "yoqilgan (Gemini)"
-    elif ANTHROPIC_API_KEY:
-        ai_status = "yoqilgan (Claude)"
     else:
         ai_status = "o'chirilgan (API kalit yo'q)"
     print(f"🤖 AI-chat: {ai_status}\n")
@@ -970,12 +970,13 @@ def main():
     # AI-чат: свободный текст (не команды). Регистрируем последним.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     
-    # Автопостинг: ежедневный обратный отсчёт в канал
+    # Автопостинг: непрерывный обратный отсчёт в канал (24/7).
+    # Интервал — POST_INTERVAL_MINUTES (по умолчанию 30 мин). Первый пост через 30 сек после старта.
     job_queue = app.job_queue
     if job_queue is not None:
-        # Каждый день в 10:00 по серверному времени
-        job_queue.run_daily(post_countdown, time=dtime(hour=10, minute=0))
-        print("⏰ Avtoposting yoqildi (har kuni 10:00 da countdown)")
+        interval_sec = max(1, POST_INTERVAL_MINUTES) * 60
+        job_queue.run_repeating(post_countdown, interval=interval_sec, first=30)
+        print(f"⏰ Avtoposting yoqildi — har {POST_INTERVAL_MINUTES} daqiqada countdown (24/7)")
     else:
         print("⚠️ JobQueue mavjud emas — avtoposting o'chirilgan")
     
