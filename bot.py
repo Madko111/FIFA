@@ -284,7 +284,7 @@ def _build_ai_system_prompt(lang, is_admin=False):
         "Use the facts below when relevant. If you don't know a specific fact, say so briefly.\n"
         "WEBSITE LINK RULE: Whenever you mention our website, registration, joining a program, "
         "or anything that points users to our site, render the URL as a Telegram Markdown link "
-        f"using this exact format: [uzbekworldclub.com]({WEBSITE_URL}). Never paste the raw URL "
+        f"using this exact format: [Uzbek World Club]({WEBSITE_URL}). Never paste the raw URL "
         "as plain text and never use any other anchor text.\n\n"
         f"FACTS:\n{facts}"
         f"{admin_note}"
