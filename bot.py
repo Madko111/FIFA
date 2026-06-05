@@ -12,6 +12,7 @@ from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
     CallbackQueryHandler,
+    ChatMemberHandler,
     MessageHandler,
     filters,
     ContextTypes
@@ -192,6 +193,18 @@ def track_user_interaction(user_id):
 # Пользователи, ожидающие ввода вопроса для AI (нажали "Ask AI" в меню)
 _AI_WAITING = set()
 
+# Контекст последних 5 сообщений на пользователя: {user_id: [(role, text), ...]}
+from collections import defaultdict, deque
+_CONV_HISTORY: dict[int, deque] = defaultdict(lambda: deque(maxlen=5))
+
+def _record_message(user_id: int, role: str, text: str):
+    """Сохраняет одно сообщение (user/assistant) в историю."""
+    _CONV_HISTORY[user_id].append((role, text))
+
+def _get_history(user_id: int) -> list[dict]:
+    """Возвращает историю в формате [{role, content}, ...] для Claude/Gemini."""
+    return [{"role": r, "content": t} for r, t in _CONV_HISTORY[user_id]]
+
 # Ленивая инициализация клиентов
 _gemini_client = None
 _anthropic_client = None
@@ -308,17 +321,24 @@ def _looks_on_topic(text):
     t = (text or "").lower()
     return any(k in t for k in AI_TOPIC_KEYWORDS)
 
-async def _ask_gemini(question, system_prompt):
-    """Запрос к Gemini. Возвращает текст или None."""
+async def _ask_gemini(question, system_prompt, history=None):
+    """Запрос к Gemini с историей разговора. Возвращает текст или None."""
     client = _get_gemini_client()
     if client is None:
         return None
     try:
         from google.genai import types
+        # Собираем контекст из истории + новый вопрос в один запрос
+        parts = []
+        for msg in (history or []):
+            prefix = "User" if msg["role"] == "user" else "Assistant"
+            parts.append(f"{prefix}: {msg['content']}")
+        parts.append(f"User: {question}")
+        full_prompt = "\n".join(parts)
         def _call():
             return client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=question,
+                contents=full_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     max_output_tokens=400,
@@ -332,18 +352,20 @@ async def _ask_gemini(question, system_prompt):
         print(f"⚠️ Gemini xatosi: {e}")
         return None
 
-async def _ask_claude(question, system_prompt):
-    """Запрос к Claude. Возвращает текст или None."""
+async def _ask_claude(question, system_prompt, history=None):
+    """Запрос к Claude с историей разговора. Возвращает текст или None."""
     client = _get_anthropic_client()
     if client is None:
         return None
     try:
+        messages = list(history or [])
+        messages.append({"role": "user", "content": question})
         def _call():
             return client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=400,
                 system=system_prompt,
-                messages=[{"role": "user", "content": question}],
+                messages=messages,
             )
         resp = await asyncio.to_thread(_call)
         parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
@@ -353,21 +375,29 @@ async def _ask_claude(question, system_prompt):
         print(f"⚠️ Claude xatosi: {e}")
         return None
 
-async def ask_ai(question, lang, is_admin=False):
-    """Короткий тематический ответ. Сначала Claude, при отсутствии — Gemini.
+async def ask_ai(question, lang, is_admin=False, user_id=None):
+    """Короткий тематический ответ с контекстом последних 5 сообщений.
 
     Возвращает текст или None при ошибке.
     """
     system_prompt = _build_ai_system_prompt(lang, is_admin)
+    history = _get_history(user_id) if user_id else []
+
+    answer = None
     # Приоритет — Claude
     if ANTHROPIC_API_KEY:
-        answer = await _ask_claude(question, system_prompt)
-        if answer:
-            return answer
+        answer = await _ask_claude(question, system_prompt, history)
     # Запасной — Gemini
-    if GEMINI_API_KEY:
-        return await _ask_gemini(question, system_prompt)
-    return None
+    if not answer and GEMINI_API_KEY:
+        answer = await _ask_gemini(question, system_prompt, history)
+
+    # Сохраняем в историю (вопрос + ответ)
+    if user_id:
+        _record_message(user_id, "user", question)
+        if answer:
+            _record_message(user_id, "assistant", answer)
+
+    return answer
 
 # ============================================
 # МЕНЮ
@@ -527,7 +557,12 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(schedule_text)
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /ask <вопрос> — разовый AI-вопрос."""
+    """Команда /ask <вопрос> или /ai <вопрос>.
+
+    Если вопрос есть в аргументах — сразу отвечаем.
+    Если аргументов нет — включаем режим ожидания: следующий текст пользователя
+    будет передан AI (как нажатие кнопки "Ask AI" в меню).
+    """
     user_id = update.effective_user.id
     track_user_interaction(user_id)
     lang = get_user_language(user_id) or 'uz'
@@ -535,19 +570,79 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     question = " ".join(context.args).strip() if context.args else ""
     if not question:
-        await update.message.reply_text(get_text(lang, 'ask_ai_usage'))
+        _AI_WAITING.add(user_id)
+        await update.message.reply_text(
+            get_text(lang, 'ask_ai_prompt'),
+            parse_mode='Markdown'
+        )
         return
 
-    await _answer_with_ai(update.message, question, lang, is_admin)
+    await _answer_with_ai(update.message, question, lang, is_admin, user_id=user_id)
 
-async def _answer_with_ai(message, question, lang, is_admin):
+async def matches_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /matches — алиас расписания."""
+    await schedule_command(update, context)
+
+async def players_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /players — список игроков с инлайн-кнопками."""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    await update.message.reply_text(
+        get_text(lang, 'players_title'),
+        reply_markup=get_players_menu(lang)
+    )
+
+async def watchparty_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /watchparty — выбор города."""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    await update.message.reply_text(
+        get_text(lang, 'watchparty_title'),
+        reply_markup=get_cities_menu(lang)
+    )
+
+async def programs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /programs — список программ."""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    await update.message.reply_text(
+        get_text(lang, 'programs_title'),
+        reply_markup=get_programs_menu(lang)
+    )
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /menu — главное меню."""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    is_admin = user_id in ADMIN_USER_IDS
+    await update.message.reply_text(
+        get_text(lang, 'main_menu'),
+        reply_markup=get_main_menu(lang, is_admin),
+        parse_mode="Markdown"
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /help — список всех команд."""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    await update.message.reply_text(
+        get_text(lang, 'help_text'),
+        parse_mode="Markdown"
+    )
+
+async def _answer_with_ai(message, question, lang, is_admin, user_id=None):
     """Общий обработчик: показывает 'думаю', спрашивает AI, шлёт ответ или отказ."""
     if not AI_ENABLED:
         await message.reply_text(get_text(lang, 'ask_ai_error'))
         return
 
     thinking = await message.reply_text(get_text(lang, 'ask_ai_thinking'))
-    answer = await ask_ai(question, lang, is_admin)
+    answer = await ask_ai(question, lang, is_admin, user_id=user_id)
     final = answer or get_text(lang, 'ask_ai_error')
     # Сначала пробуем Markdown (ради ссылок [текст](url)). При ошибке парсинга — без форматирования.
     try:
@@ -606,7 +701,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if mentioned and bot_username:
         text = text.replace(f"@{bot_username}", "").strip()
 
-    await _answer_with_ai(update.message, text, lang, is_admin)
+    await _answer_with_ai(update.message, text, lang, is_admin, user_id=user_id)
 
 # ============================================
 # CALLBACK HANDLERS
@@ -821,7 +916,10 @@ async def _handle_button(query):
 # ============================================
 
 async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Приветствует новых участников группы/канала на 3 языках."""
+    """Приветствует новых участников группы/канала на 3 языках.
+    
+    Срабатывает через filters.StatusUpdate.NEW_CHAT_MEMBERS (если бот — админ).
+    """
     if not update.message or not update.message.new_chat_members:
         return
 
@@ -830,7 +928,6 @@ async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE
         if member.is_bot:
             continue
         name = member.first_name or "friend"
-        # Многоязычное приветствие (uz / ru / en вместе)
         text = (
             f"{get_text('uz', 'new_member', name=name, bot_username=bot_username)}\n\n"
             f"────────\n\n"
@@ -842,6 +939,38 @@ async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(text)
         except TelegramError as e:
             print(f"⚠️ Не удалось отправить приветствие: {e}")
+
+async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Резервный приветственный хендлер через chat_member updates.
+    
+    Работает даже если бот НЕ админ — но требует разрешения allowed_updates=['chat_member'].
+    Срабатывает когда статус пользователя меняется (join/leave/banned/etc).
+    """
+    member_update = update.chat_member
+    if member_update is None:
+        return
+    
+    old_status = member_update.old_chat_member.status
+    new_status = member_update.new_chat_member.status
+
+    # Только новые участники: was "left"/"kicked" → became "member"/"administrator"
+    if old_status in ("left", "kicked") and new_status in ("member", "administrator"):
+        user = member_update.new_chat_member.user
+        if user.is_bot:
+            return
+        name = user.first_name or "friend"
+        bot_username = context.bot.username
+        text = (
+            f"{get_text('uz', 'new_member', name=name, bot_username=bot_username)}\n\n"
+            f"────────\n\n"
+            f"{get_text('ru', 'new_member', name=name, bot_username=bot_username)}\n\n"
+            f"────────\n\n"
+            f"{get_text('en', 'new_member', name=name, bot_username=bot_username)}"
+        )
+        try:
+            await context.bot.send_message(chat_id=member_update.chat.id, text=text)
+        except TelegramError as e:
+            print(f"⚠️ Не удалось отправить приветствие (chat_member): {e}")
 
 # ============================================
 # АВТОПОСТИНГ (JobQueue)
@@ -962,19 +1091,48 @@ def main():
         ai_status = "o'chirilgan (API kalit yo'q)"
     print(f"🤖 AI-chat: {ai_status}\n")
     
+    # post_init: регистрирует список команд для автоподстановки в Telegram-клиенте (синее меню)
+    async def _set_commands(application):
+        from telegram import BotCommand
+        await application.bot.set_my_commands([
+            BotCommand("start",       "Boshlash / Старт / Start"),
+            BotCommand("menu",        "Asosiy menyu / Главное меню / Main menu"),
+            BotCommand("matches",     "O'yinlar jadvali / Расписание / Matches"),
+            BotCommand("players",     "O'yinchilar / Игроки / Players"),
+            BotCommand("watchparty",  "Watch Party shaharlari / Города / Watch Party cities"),
+            BotCommand("programs",    "Dasturlar / Программы / Programs"),
+            BotCommand("ai",          "AI'dan so'rash / Спросить AI / Ask AI"),
+            BotCommand("ask",         "AI'dan so'rash / Спросить AI / Ask AI"),
+            BotCommand("help",        "Yordam / Помощь / Help"),
+        ])
+        print("✅ Bot komandalar ro'yxati o'rnatildi")
+
     # Создаем приложение
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(_set_commands)
+        .build()
+    )
+
     # Команды
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("menu", menu_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("schedule", schedule_command))
+    app.add_handler(CommandHandler("matches", matches_command))
+    app.add_handler(CommandHandler("players", players_command))
+    app.add_handler(CommandHandler("watchparty", watchparty_command))
+    app.add_handler(CommandHandler("programs", programs_command))
     app.add_handler(CommandHandler("ask", ask_command))
-    
+    app.add_handler(CommandHandler("ai", ask_command))
+
     # Кнопки
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # Приветствие новых участников
+    # Приветствие новых участников (2 способа: message-based + chat_member-based)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members))
+    app.add_handler(ChatMemberHandler(track_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
     # AI-чат: свободный текст (не команды). Регистрируем последним.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
@@ -991,8 +1149,8 @@ def main():
     
     print("✅ Bot ishga tushdi!\n")
     
-    # Запуск
-    app.run_polling()
+    # Запуск — allowed_updates включает chat_member для приветствий
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()

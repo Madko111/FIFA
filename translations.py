@@ -68,7 +68,21 @@ Kerakli bo'limni tanlang:""",
         'ask_ai_thinking': "🤖 O'ylayapman...",
         'ask_ai_offtopic': "🤖 Kechirasiz, mening bilim bazam faqat Uzbek World Club, Jahon Chempionati va JCh-2026 mavzularini qamrab oladi.",
         'ask_ai_error': "⚠️ Kechirasiz, hozir javob berolmadim. Birozdan so'ng qayta urinib ko'ring.",
-        'ask_ai_usage': "🤖 Foydalanish: /ask savolingiz\nMasalan: /ask O'zbekiston qachon o'ynaydi?",        'programs_title': "🎯 DASTURLAR\n\nQaysi dasturga qiziqasiz?",
+        'ask_ai_usage': "🤖 Foydalanish: /ask savolingiz\nMasalan: /ask O'zbekiston qachon o'ynaydi?",
+        'help_text': """🇺🇿 *Uzbek World Club — buyruqlar*
+
+/start — Botni boshlash
+/menu — Asosiy menyu
+/matches — O'yinlar jadvali (Guruh K)
+/players — Sborniy o'yinchilari
+/watchparty — Watch Party shaharlari
+/programs — Dasturlar (Founders Davra, Stadium Davra va boshq.)
+/ai — AI'dan so'rash (yoki yozing: `/ai savolingiz`)
+/ask — /ai bilan bir xil
+/help — Ushbu yordam
+
+Savol bormi? /ai bosing va yozing.""",
+        'programs_title': "🎯 DASTURLAR\n\nQaysi dasturga qiziqasiz?",
         'prog_founders': "👑 Founders Davra",
         'prog_stadium': "🏟 Stadion Davrasi",
         'prog_captain': "🧭 Shahar Kapitani",
@@ -193,6 +207,19 @@ Birga bo'laylik! 💪 @{channel}""",
         'ask_ai_offtopic': "🤖 Извините, моя база знаний охватывает только темы Uzbek World Club, Чемпионата мира и ЧМ-2026.",
         'ask_ai_error': "⚠️ Извините, не смог ответить сейчас. Попробуйте чуть позже.",
         'ask_ai_usage': "🤖 Использование: /ask ваш вопрос\nНапример: /ask Когда играет Узбекистан?",
+        'help_text': """🇺🇿 *Uzbek World Club — команды*
+
+/start — Запустить бота
+/menu — Главное меню
+/matches — Расписание матчей (Группа K)
+/players — Игроки сборной
+/watchparty — Города Watch Party
+/programs — Программы (Founders Davra, Stadium Davra и др.)
+/ai — Спросить AI (или сразу: `/ai ваш вопрос`)
+/ask — то же, что /ai
+/help — Эта справка
+
+Есть вопрос? Нажмите /ai и напишите.""",
         'programs_title': "🎯 ПРОГРАММЫ\n\nКакая программа вам интересна?",
         'prog_founders': "👑 Founders Davra",
         'prog_stadium': "🏟 Stadium Davra",
@@ -318,6 +345,19 @@ Choose a section:""",
         'ask_ai_offtopic': "🤖 Sorry, my knowledge base only covers Uzbek World Club, the World Cup, and World Cup 2026.",
         'ask_ai_error': "⚠️ Sorry, I couldn't answer right now. Please try again shortly.",
         'ask_ai_usage': "🤖 Usage: /ask your question\nExample: /ask When does Uzbekistan play?",
+        'help_text': """🇺🇿 *Uzbek World Club — commands*
+
+/start — Start the bot
+/menu — Main menu
+/matches — Match schedule (Group K)
+/players — National team squad
+/watchparty — Watch Party cities
+/programs — Programs (Founders Davra, Stadium Davra, etc.)
+/ai — Ask AI (or inline: `/ai your question`)
+/ask — Same as /ai
+/help — This help message
+
+Got a question? Tap /ai and type it.""",
         'programs_title': "🎯 PROGRAMS\n\nWhich program interests you?",
         'prog_founders': "👑 Founders Davra",
         'prog_stadium': "🏟 Stadium Davra",
