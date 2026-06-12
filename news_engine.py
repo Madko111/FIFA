@@ -87,19 +87,39 @@ def fetch_feed(feed_info, timeout=8):
         for entry in feed.entries[:10]:
             title = entry.get("title", "").strip()
             link = entry.get("link", "").strip()
-            summary = entry.get("summary", "").strip()
             published = entry.get("published", "")
-            source = entry.get("source", {}).get("title", feed.feed.get("title", "Unknown"))
-            
-            if not title or not link:
+
+            # Извлекаем описание из нескольких возможных полей
+            summary = ""
+            for field in ("summary", "description", "content"):
+                val = entry.get(field, "")
+                if isinstance(val, list) and val:
+                    val = val[0].get("value", "")
+                if val and len(val) > 30:
+                    summary = clean_html(str(val))
+                    break
+
+            # Источник: вытаскиваем из "Title - Source" паттерна
+            if " - " in title:
+                parts = title.rsplit(" - ", 1)
+                clean_title = parts[0].strip()
+                source_name = parts[1].strip()
+            else:
+                clean_title = title
+                source_name = (
+                    entry.get("source", {}).get("title", "")
+                    or feed.feed.get("title", "Unknown")
+                )
+
+            if not clean_title or not link:
                 continue
-            
+
             articles.append({
-                "title": title,
+                "title": clean_title,
                 "link": link,
-                "summary": clean_html(summary),
+                "summary": summary,
                 "published": published,
-                "source": source,
+                "source": source_name,
                 "priority": feed_info["priority"],
                 "lang": feed_info["lang"],
             })
@@ -224,19 +244,21 @@ def detect_topic(text):
     # Порядок от более специфичных к общим
     ordered_topics = [
         ("countdown",        ["days left", "kun qoldi", "дней осталось", "hours left", "countdown"]),
-        ("press_conference", ["press conference", "presser", "matbuot anjumani", "пресс-конференция"]),
-        ("transfer",         ["transfer", "signs for", "loaned", "o'tkazma", "трансфер", "перешёл"]),
-        ("match_result",     ["score", "won", "lost", "draw", "natija", "счёт", "победа", "поражение"]),
-        ("statistics",       ["stats", "record", "statistika", "рекорд", "статистика", "ranked"]),
-        ("standings",        ["standing", "table", "points", "jadval", "турнирная", "таблица", "league table"]),
-        ("interview",        ["interview", "suhbat", "интервью", "заявил", "said in"]),
-        ("history",          ["history", "tarix", "first time", "биринчи", "впервые", "historic"]),
-        ("watch_party",      ["watch party", "fan zone", "tomoshabin", "болельщики", "viewing"]),
-        ("group_analysis",   ["group k", "guruh k", "группа k"]),
-        ("match_preview",    ["vs", "preview", "forecast", "prediction", "o'yin oldi", "матч"]),
-        ("player_profile",   ["shomurodov", "xusanov", "masharipov", "toshmatov", "o'yinchi", "игрок", "player profile"]),
-        ("wc_news",          ["world cup", "fifa", "2026", "jahon chempionati", "чм-2026", "mundial"]),
-        ("motivation",       ["support", "believe", "together", "qo'llab", "верим", "вместе"]),
+        ("press_conference", ["press conference", "presser", "matbuot anjumani", "пресс-конференция", "anjuman"]),
+        ("transfer",         ["transfer", "signs for", "loaned", "o'tkazma", "трансфер", "перешёл", "o'tdi"]),
+        ("match_result",     ["score", "won", "lost", "draw", "natija", "счёт", "победа", "поражение", "g'alaba", "mag'lub"]),
+        ("statistics",       ["stats", "record", "statistika", "рекорд", "статистика", "ranked", "reyting", "ranking"]),
+        ("standings",        ["standing", "table", "points", "jadval", "турнирная", "таблица", "league table", "ochko"]),
+        ("interview",        ["interview", "suhbat", "интервью", "заявил", "said in", "высказался", "aytdi", "so'zladi"]),
+        ("history",          ["history", "tarix", "first time", "биринчи", "впервые", "historic", "tarixiy", "birinchi marta"]),
+        ("watch_party",      ["watch party", "fan zone", "tomoshabin", "болельщики", "viewing", "muxlis", "fan", "фанат"]),
+        ("team_news",        ["arrival", "arrived", "training camp", "squad", "tarkib", "o'quv lageri", "прибыл", "тренировочный"]),
+        ("group_analysis",   ["group k", "guruh k", "группа k", "group stage", "guruh bosqichi"]),
+        ("match_preview",    ["vs", "preview", "forecast", "prediction", "o'yin oldi", "матч", "match preview", "o'yindan oldin"]),
+        ("player_profile",   ["shomurodov", "xusanov", "masharipov", "toshmatov", "fayzullayev", "o'yinchi", "игрок", "player profile", "futbolchi"]),
+        ("wc_news",          ["world cup", "fifa", "2026", "jahon chempionati", "чм-2026", "mundial", "worldcup", "championship"]),
+        ("motivation",       ["support", "believe", "together", "qo'llab", "верим", "вместе", "birgalikda"]),
+        ("general_football", ["football", "futbol", "soccer", "match", "o'yin", "o'zbek"]),
     ]
 
     for topic, keywords in ordered_topics:
@@ -344,50 +366,55 @@ def format_news_post(article, lang="uz"):
     Только реальный контент — никакой отсебятины.
     """
     title = article["title"].strip()
-    summary = article["summary"].strip()
+    summary = article["summary"].strip() if article["summary"] else ""
     link = article["link"].strip()
     source = article["source"].strip()
-    
-    # Убираем слишком короткие описания
-    if len(summary) < 50:
+
+    # Убираем артефакты из summary (дублирование заголовка источника)
+    if summary and source and summary.endswith(source):
+        summary = summary[: -len(source)].strip()
+
+    # Убираем слишком короткие (< 60 символов)
+    if len(summary) < 60:
         summary = ""
-    
-    # Лимит описания — 400 символов
-    if len(summary) > 400:
-        summary = summary[:400].rstrip() + "..."
-    
+
+    # Обрезаем до 500 символов
+    if len(summary) > 500:
+        summary = summary[:500].rstrip() + "..."
+
     # Определяем эмодзи по теме
     topic = detect_topic(title + " " + summary)
     emoji_map = {
-        "player_profile": "⚽️",
-        "match_preview": "🔮",
-        "match_result": "🏆",
-        "standings": "📊",
-        "transfer": "🔄",
-        "interview": "🎙",
-        "statistics": "📈",
-        "history": "📜",
+        "player_profile":   "⚽️",
+        "match_preview":    "🔮",
+        "match_result":     "🏆",
+        "standings":        "📊",
+        "transfer":         "🔄",
+        "interview":        "🎙",
+        "statistics":       "📈",
+        "history":          "📜",
         "press_conference": "📢",
-        "watch_party": "🎉",
-        "group_analysis": "🗂",
-        "wc_news": "🌍",
-        "countdown": "⏰",
-        "motivation": "💪",
+        "watch_party":      "🎉",
+        "team_news":        "🏋️",
+        "group_analysis":   "🗂",
+        "wc_news":          "🌍",
+        "countdown":        "⏰",
+        "motivation":       "💪",
+        "general_football": "⚽️",
     }
     emoji = emoji_map.get(topic, "📰")
-    
+
     # Строим пост
-    lines = [f"{emoji} {title}"]
-    
+    parts = [f"{emoji} <b>{title}</b>"]
+
     if summary:
-        lines.append("")
-        lines.append(summary)
-    
-    lines.append("")
-    lines.append(f"🔗 {link}")
-    lines.append(f"📰 {source}")
-    
-    return "\n".join(lines)
+        parts.append("")
+        parts.append(summary)
+
+    parts.append("")
+    parts.append(f'📰 <a href="{link}">{source}</a>')
+
+    return "\n".join(parts)
 
 
 def format_countdown_post(days, lang="uz"):

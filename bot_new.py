@@ -198,7 +198,12 @@ async def run_auto_post():
             continue
         
         try:
-            await bot.send_message(chat_id=CHANNEL_ID, text=post_text, disable_web_page_preview=False)
+            await bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=post_text,
+                parse_mode="HTML",
+                disable_web_page_preview=False,
+            )
             mark_published(post_text, source_url=article["link"])
             print(f"  ✅ Опубликовано: {article['title'][:60]}")
             posted = True
@@ -216,7 +221,11 @@ async def run_auto_post():
                 dup, _ = is_duplicate(cd_post)
                 if not dup:
                     try:
-                        await bot.send_message(chat_id=CHANNEL_ID, text=cd_post)
+                        await bot.send_message(
+                            chat_id=CHANNEL_ID,
+                            text=cd_post,
+                            parse_mode="HTML",
+                        )
                         mark_published(cd_post)
                         print(f"  ✅ Countdown опубликован ({days} дней)")
                     except Exception as e:
