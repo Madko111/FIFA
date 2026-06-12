@@ -12,7 +12,6 @@ from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
     CallbackQueryHandler,
-    ChatMemberHandler,
     MessageHandler,
     filters,
     ContextTypes
@@ -132,17 +131,8 @@ PROJECT_PHASE = "🟢 LAUNCH"
 # СИСТЕМА ЯЗЫКОВ
 # ============================================
 
-# Postgres backend (если DATABASE_URL задан). При отсутствии — JSON-файлы как раньше.
-try:
-    import db as _db
-    _DB_ENABLED = _db.is_enabled()
-except Exception as _e:
-    print(f"⚠️ DB module import error: {_e}")
-    _db = None
-    _DB_ENABLED = False
-
 def load_user_settings():
-    """Загружает настройки пользователей (JSON-фоллбек, только если БД не включена)."""
+    """Загружает настройки пользователей"""
     if os.path.exists(USER_SETTINGS_FILE):
         try:
             with open(USER_SETTINGS_FILE, 'r', encoding='utf-8') as f:
@@ -152,28 +142,17 @@ def load_user_settings():
     return {}
 
 def save_user_settings(settings):
-    """Сохраняет настройки пользователей (JSON-фоллбек)."""
+    """Сохраняет настройки пользователей"""
     with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 def get_user_language(user_id):
     """Получает язык пользователя"""
-    if _DB_ENABLED:
-        try:
-            return _db.get_user_language(int(user_id))
-        except Exception as e:
-            print(f"⚠️ DB get_user_language error: {e}")
     settings = load_user_settings()
     return settings.get(str(user_id), {}).get('language', None)
 
 def set_user_language(user_id, language):
     """Устанавливает язык пользователя"""
-    if _DB_ENABLED:
-        try:
-            _db.set_user_language(int(user_id), language)
-            return
-        except Exception as e:
-            print(f"⚠️ DB set_user_language error: {e}")
     settings = load_user_settings()
     if str(user_id) not in settings:
         settings[str(user_id)] = {}
@@ -187,11 +166,6 @@ def set_user_language(user_id, language):
 
 def load_kpi_data():
     """Загружает KPI данные"""
-    if _DB_ENABLED:
-        try:
-            return _db.load_kpi_data()
-        except Exception as e:
-            print(f"⚠️ DB load_kpi_data error: {e}")
     if os.path.exists(KPI_DATA_FILE):
         try:
             with open(KPI_DATA_FILE, 'r', encoding='utf-8') as f:
@@ -201,18 +175,12 @@ def load_kpi_data():
     return {"daily_stats": {}, "user_interactions": {}}
 
 def save_kpi_data(data):
-    """Сохраняет KPI данные (JSON-фоллбек). С БД запись идёт через track_user_interaction."""
+    """Сохраняет KPI данные"""
     with open(KPI_DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def track_user_interaction(user_id):
     """Отслеживает взаимодействие"""
-    if _DB_ENABLED:
-        try:
-            _db.track_user_interaction(int(user_id))
-            return
-        except Exception as e:
-            print(f"⚠️ DB track_user_interaction error: {e}")
     data = load_kpi_data()
     data['user_interactions'][str(user_id)] = datetime.now().isoformat()
     save_kpi_data(data)
@@ -223,18 +191,6 @@ def track_user_interaction(user_id):
 
 # Пользователи, ожидающие ввода вопроса для AI (нажали "Ask AI" в меню)
 _AI_WAITING = set()
-
-# Контекст последних 5 сообщений на пользователя: {user_id: [(role, text), ...]}
-from collections import defaultdict, deque
-_CONV_HISTORY: dict[int, deque] = defaultdict(lambda: deque(maxlen=5))
-
-def _record_message(user_id: int, role: str, text: str):
-    """Сохраняет одно сообщение (user/assistant) в историю."""
-    _CONV_HISTORY[user_id].append((role, text))
-
-def _get_history(user_id: int) -> list[dict]:
-    """Возвращает историю в формате [{role, content}, ...] для Claude/Gemini."""
-    return [{"role": r, "content": t} for r, t in _CONV_HISTORY[user_id]]
 
 # Ленивая инициализация клиентов
 _gemini_client = None
@@ -308,19 +264,9 @@ def _build_ai_system_prompt(lang, is_admin=False):
     if is_admin:
         data = load_kpi_data()
         total_users = len(data.get('user_interactions', {}))
-        def _parse_ts(s):
-            try:
-                dt = datetime.fromisoformat(s)
-            except Exception:
-                return None
-            # привести к naive UTC для безопасного сравнения
-            if dt.tzinfo is not None:
-                dt = dt.astimezone().replace(tzinfo=None)
-            return dt
-        threshold = datetime.now() - timedelta(days=1)
         active_24h = len([
             u for u, t in data.get('user_interactions', {}).items()
-            if (_parse_ts(t) or datetime.min) > threshold
+            if datetime.fromisoformat(t) > datetime.now() - timedelta(days=1)
         ])
         admin_note = (
             "\n\nADMIN MODE: This user is an admin. You may also answer questions about "
@@ -362,24 +308,17 @@ def _looks_on_topic(text):
     t = (text or "").lower()
     return any(k in t for k in AI_TOPIC_KEYWORDS)
 
-async def _ask_gemini(question, system_prompt, history=None):
-    """Запрос к Gemini с историей разговора. Возвращает текст или None."""
+async def _ask_gemini(question, system_prompt):
+    """Запрос к Gemini. Возвращает текст или None."""
     client = _get_gemini_client()
     if client is None:
         return None
     try:
         from google.genai import types
-        # Собираем контекст из истории + новый вопрос в один запрос
-        parts = []
-        for msg in (history or []):
-            prefix = "User" if msg["role"] == "user" else "Assistant"
-            parts.append(f"{prefix}: {msg['content']}")
-        parts.append(f"User: {question}")
-        full_prompt = "\n".join(parts)
         def _call():
             return client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=full_prompt,
+                contents=question,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     max_output_tokens=400,
@@ -393,20 +332,18 @@ async def _ask_gemini(question, system_prompt, history=None):
         print(f"⚠️ Gemini xatosi: {e}")
         return None
 
-async def _ask_claude(question, system_prompt, history=None):
-    """Запрос к Claude с историей разговора. Возвращает текст или None."""
+async def _ask_claude(question, system_prompt):
+    """Запрос к Claude. Возвращает текст или None."""
     client = _get_anthropic_client()
     if client is None:
         return None
     try:
-        messages = list(history or [])
-        messages.append({"role": "user", "content": question})
         def _call():
             return client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=400,
                 system=system_prompt,
-                messages=messages,
+                messages=[{"role": "user", "content": question}],
             )
         resp = await asyncio.to_thread(_call)
         parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
@@ -416,29 +353,21 @@ async def _ask_claude(question, system_prompt, history=None):
         print(f"⚠️ Claude xatosi: {e}")
         return None
 
-async def ask_ai(question, lang, is_admin=False, user_id=None):
-    """Короткий тематический ответ с контекстом последних 5 сообщений.
+async def ask_ai(question, lang, is_admin=False):
+    """Короткий тематический ответ. Сначала Claude, при отсутствии — Gemini.
 
     Возвращает текст или None при ошибке.
     """
     system_prompt = _build_ai_system_prompt(lang, is_admin)
-    history = _get_history(user_id) if user_id else []
-
-    answer = None
     # Приоритет — Claude
     if ANTHROPIC_API_KEY:
-        answer = await _ask_claude(question, system_prompt, history)
-    # Запасной — Gemini
-    if not answer and GEMINI_API_KEY:
-        answer = await _ask_gemini(question, system_prompt, history)
-
-    # Сохраняем в историю (вопрос + ответ)
-    if user_id:
-        _record_message(user_id, "user", question)
+        answer = await _ask_claude(question, system_prompt)
         if answer:
-            _record_message(user_id, "assistant", answer)
-
-    return answer
+            return answer
+    # Запасной — Gemini
+    if GEMINI_API_KEY:
+        return await _ask_gemini(question, system_prompt)
+    return None
 
 # ============================================
 # МЕНЮ
@@ -598,12 +527,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(schedule_text)
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /ask <вопрос> или /ai <вопрос>.
-
-    Если вопрос есть в аргументах — сразу отвечаем.
-    Если аргументов нет — включаем режим ожидания: следующий текст пользователя
-    будет передан AI (как нажатие кнопки "Ask AI" в меню).
-    """
+    """Команда /ask <вопрос> — разовый AI-вопрос."""
     user_id = update.effective_user.id
     track_user_interaction(user_id)
     lang = get_user_language(user_id) or 'uz'
@@ -611,79 +535,19 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     question = " ".join(context.args).strip() if context.args else ""
     if not question:
-        _AI_WAITING.add(user_id)
-        await update.message.reply_text(
-            get_text(lang, 'ask_ai_prompt'),
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text(get_text(lang, 'ask_ai_usage'))
         return
 
-    await _answer_with_ai(update.message, question, lang, is_admin, user_id=user_id)
+    await _answer_with_ai(update.message, question, lang, is_admin)
 
-async def matches_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /matches — алиас расписания."""
-    await schedule_command(update, context)
-
-async def players_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /players — список игроков с инлайн-кнопками."""
-    user_id = update.effective_user.id
-    track_user_interaction(user_id)
-    lang = get_user_language(user_id) or 'uz'
-    await update.message.reply_text(
-        get_text(lang, 'players_title'),
-        reply_markup=get_players_menu(lang)
-    )
-
-async def watchparty_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /watchparty — выбор города."""
-    user_id = update.effective_user.id
-    track_user_interaction(user_id)
-    lang = get_user_language(user_id) or 'uz'
-    await update.message.reply_text(
-        get_text(lang, 'watchparty_title'),
-        reply_markup=get_cities_menu(lang)
-    )
-
-async def programs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /programs — список программ."""
-    user_id = update.effective_user.id
-    track_user_interaction(user_id)
-    lang = get_user_language(user_id) or 'uz'
-    await update.message.reply_text(
-        get_text(lang, 'programs_title'),
-        reply_markup=get_programs_menu(lang)
-    )
-
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /menu — главное меню."""
-    user_id = update.effective_user.id
-    track_user_interaction(user_id)
-    lang = get_user_language(user_id) or 'uz'
-    is_admin = user_id in ADMIN_USER_IDS
-    await update.message.reply_text(
-        get_text(lang, 'main_menu'),
-        reply_markup=get_main_menu(lang, is_admin),
-        parse_mode="Markdown"
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /help — список всех команд."""
-    user_id = update.effective_user.id
-    track_user_interaction(user_id)
-    lang = get_user_language(user_id) or 'uz'
-    await update.message.reply_text(
-        get_text(lang, 'help_text'),
-        parse_mode="Markdown"
-    )
-
-async def _answer_with_ai(message, question, lang, is_admin, user_id=None):
+async def _answer_with_ai(message, question, lang, is_admin):
     """Общий обработчик: показывает 'думаю', спрашивает AI, шлёт ответ или отказ."""
     if not AI_ENABLED:
         await message.reply_text(get_text(lang, 'ask_ai_error'))
         return
 
     thinking = await message.reply_text(get_text(lang, 'ask_ai_thinking'))
-    answer = await ask_ai(question, lang, is_admin, user_id=user_id)
+    answer = await ask_ai(question, lang, is_admin)
     final = answer or get_text(lang, 'ask_ai_error')
     # Сначала пробуем Markdown (ради ссылок [текст](url)). При ошибке парсинга — без форматирования.
     try:
@@ -742,7 +606,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if mentioned and bot_username:
         text = text.replace(f"@{bot_username}", "").strip()
 
-    await _answer_with_ai(update.message, text, lang, is_admin, user_id=user_id)
+    await _answer_with_ai(update.message, text, lang, is_admin)
 
 # ============================================
 # CALLBACK HANDLERS
@@ -957,10 +821,7 @@ async def _handle_button(query):
 # ============================================
 
 async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Приветствует новых участников группы/канала на 3 языках.
-    
-    Срабатывает через filters.StatusUpdate.NEW_CHAT_MEMBERS (если бот — админ).
-    """
+    """Приветствует новых участников группы/канала на 3 языках."""
     if not update.message or not update.message.new_chat_members:
         return
 
@@ -969,6 +830,7 @@ async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE
         if member.is_bot:
             continue
         name = member.first_name or "friend"
+        # Многоязычное приветствие (uz / ru / en вместе)
         text = (
             f"{get_text('uz', 'new_member', name=name, bot_username=bot_username)}\n\n"
             f"────────\n\n"
@@ -980,38 +842,6 @@ async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(text)
         except TelegramError as e:
             print(f"⚠️ Не удалось отправить приветствие: {e}")
-
-async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Резервный приветственный хендлер через chat_member updates.
-    
-    Работает даже если бот НЕ админ — но требует разрешения allowed_updates=['chat_member'].
-    Срабатывает когда статус пользователя меняется (join/leave/banned/etc).
-    """
-    member_update = update.chat_member
-    if member_update is None:
-        return
-    
-    old_status = member_update.old_chat_member.status
-    new_status = member_update.new_chat_member.status
-
-    # Только новые участники: was "left"/"kicked" → became "member"/"administrator"
-    if old_status in ("left", "kicked") and new_status in ("member", "administrator"):
-        user = member_update.new_chat_member.user
-        if user.is_bot:
-            return
-        name = user.first_name or "friend"
-        bot_username = context.bot.username
-        text = (
-            f"{get_text('uz', 'new_member', name=name, bot_username=bot_username)}\n\n"
-            f"────────\n\n"
-            f"{get_text('ru', 'new_member', name=name, bot_username=bot_username)}\n\n"
-            f"────────\n\n"
-            f"{get_text('en', 'new_member', name=name, bot_username=bot_username)}"
-        )
-        try:
-            await context.bot.send_message(chat_id=member_update.chat.id, text=text)
-        except TelegramError as e:
-            print(f"⚠️ Не удалось отправить приветствие (chat_member): {e}")
 
 # ============================================
 # АВТОПОСТИНГ (JobQueue)
@@ -1094,12 +924,165 @@ async def build_war_room(lang, bot=None):
     ]
     return "\n".join(lines)
 
-async def post_countdown(context: ContextTypes.DEFAULT_TYPE):
-    """Публикует обратный отсчёт в канал (на 3 языках)."""
+# ============================================
+# НОВОСТНОЙ АВТОПОСТИНГ
+# ============================================
+
+NEWS_FEEDS = [
+    "https://feeds.bbci.co.uk/sport/football/rss.xml",
+    "https://www.espn.com/espn/rss/soccer/news",
+    "https://www.theguardian.com/football/rss",
+    "https://rss.app/feeds/tFoNgcWzS8EMflrJ.xml",  # FIFA World Cup 2026 news aggregator
+]
+
+NEWS_KEYWORDS = [
+    "uzbekistan", "uzbek", "world cup 2026", "fifa 2026", "2026 world cup",
+    "wc2026", "shomurodov", "cannavaro", "group k", "host city", "host cities",
+    "метчо\"26", "чм 2026", "чемпионат мира 2026", "o'zbekiston", "o'zbek",
+]
+
+# In-memory fallback for posted URLs when DB not available
+_posted_news_urls: set = set()
+
+
+def _is_news_posted(url: str) -> bool:
+    """Check if article URL was already posted (DB or memory)."""
+    try:
+        import db as _db
+        pool = _db._get_pool()
+        if pool:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM posted_news WHERE url = %s", (url,))
+                return cur.fetchone() is not None
+    except Exception:
+        pass
+    return url in _posted_news_urls
+
+
+def _mark_news_posted(url: str, title: str) -> None:
+    """Mark article as posted."""
+    _posted_news_urls.add(url)
+    try:
+        import db as _db
+        pool = _db._get_pool()
+        if pool:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO posted_news (url, title, posted_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
+                    (url, title[:500]),
+                )
+                conn.commit()
+    except Exception:
+        pass
+
+
+def _fetch_news_articles() -> list[dict]:
+    """Fetch fresh articles from RSS feeds, filter for WC2026/Uzbekistan relevance."""
+    import feedparser
+    articles = []
+    for feed_url in NEWS_FEEDS:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in (feed.entries or [])[:10]:
+                title = getattr(entry, 'title', '') or ''
+                summary = getattr(entry, 'summary', '') or ''
+                link = getattr(entry, 'link', '') or ''
+                combined = (title + ' ' + summary).lower()
+                if any(k in combined for k in NEWS_KEYWORDS):
+                    articles.append({
+                        'title': title,
+                        'summary': summary[:500],
+                        'url': link,
+                        'source': feed.feed.get('title', feed_url),
+                    })
+        except Exception as e:
+            print(f"⚠️ News feed error ({feed_url}): {e}")
+    return articles
+
+
+async def _format_news_post(article: dict) -> str | None:
+    """Use AI to create a trilingual Telegram post from article data."""
+    prompt = (
+        f"You are a social media editor for 'Uzbek World Club' — the Uzbek fan community for FIFA World Cup 2026.\n\n"
+        f"Create a short, engaging Telegram channel post based on this news article.\n"
+        f"Title: {article['title']}\n"
+        f"Summary: {article['summary']}\n"
+        f"Source: {article['source']}\n\n"
+        f"RULES:\n"
+        f"- Write the post THREE times: first in Uzbek, then Russian, then English, separated by ────────\n"
+        f"- Each version max 3 sentences. No fluff.\n"
+        f"- Start each with a relevant emoji\n"
+        f"- If about Uzbekistan/Uzbek team: extra enthusiasm 🇺🇿\n"
+        f"- End each version with: [Uzbek World Club]({WEBSITE_URL})\n"
+        f"- Do NOT include the source URL in the text\n"
+        f"- Use Telegram Markdown (bold=**text**, italic=_text_)\n"
+        f"- Output only the post text, nothing else"
+    )
+    try:
+        if ANTHROPIC_API_KEY:
+            client = _get_anthropic_client()
+            if client:
+                def _call():
+                    return client.messages.create(
+                        model=CLAUDE_MODEL,
+                        max_tokens=600,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                resp = await asyncio.to_thread(_call)
+                parts = [b.text for b in resp.content if getattr(b, 'type', None) == 'text']
+                return "".join(parts).strip() or None
+        if GEMINI_API_KEY:
+            client = _get_gemini_client()
+            if client:
+                from google.genai import types
+                def _gcall():
+                    return client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(max_output_tokens=600, temperature=0.5),
+                    )
+                resp = await asyncio.to_thread(_gcall)
+                return (getattr(resp, 'text', None) or '').strip() or None
+    except Exception as e:
+        print(f"⚠️ AI news format error: {e}")
+    return None
+
+
+async def post_news(context: ContextTypes.DEFAULT_TYPE):
+    """Fetch latest WC2026/Uzbekistan news and post to channel. Falls back to countdown if no new articles."""
+    # Try to find a fresh unposted article
+    articles = await asyncio.to_thread(_fetch_news_articles)
+    for article in articles:
+        if not article.get('url') or _is_news_posted(article['url']):
+            continue
+        # Format with AI
+        text = await _format_news_post(article)
+        if not text:
+            continue
+        try:
+            await context.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text=text,
+                parse_mode='Markdown',
+                disable_web_page_preview=True,
+            )
+            _mark_news_posted(article['url'], article['title'])
+            print(f"📰 News posted: {article['title'][:60]}")
+            return
+        except TelegramError as e:
+            print(f"⚠️ Failed to post news: {e}")
+            # Try without Markdown in case of parse error
+            try:
+                await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+                _mark_news_posted(article['url'], article['title'])
+                return
+            except TelegramError:
+                continue
+
+    # No new articles — fall back to countdown
     days = days_until_first_match()
     if days < 0:
-        return  # турнир начался
-
+        return
     channel_handle = CHANNEL_ID.lstrip('@')
     text = (
         f"{get_text('uz', 'countdown_post', days=days, channel=channel_handle)}\n\n"
@@ -1110,9 +1093,9 @@ async def post_countdown(context: ContextTypes.DEFAULT_TYPE):
     )
     try:
         await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
-        print(f"📢 Countdown posted: {days} days left")
+        print(f"📢 No new news — countdown posted: {days} days left")
     except TelegramError as e:
-        print(f"⚠️ Не удалось опубликовать пост в канал: {e}")
+        print(f"⚠️ Countdown post failed: {e}")
 
 # ============================================
 # ЗАПУСК
@@ -1132,48 +1115,19 @@ def main():
         ai_status = "o'chirilgan (API kalit yo'q)"
     print(f"🤖 AI-chat: {ai_status}\n")
     
-    # post_init: регистрирует список команд для автоподстановки в Telegram-клиенте (синее меню)
-    async def _set_commands(application):
-        from telegram import BotCommand
-        await application.bot.set_my_commands([
-            BotCommand("start",       "Boshlash / Старт / Start"),
-            BotCommand("menu",        "Asosiy menyu / Главное меню / Main menu"),
-            BotCommand("matches",     "O'yinlar jadvali / Расписание / Matches"),
-            BotCommand("players",     "O'yinchilar / Игроки / Players"),
-            BotCommand("watchparty",  "Watch Party shaharlari / Города / Watch Party cities"),
-            BotCommand("programs",    "Dasturlar / Программы / Programs"),
-            BotCommand("ai",          "AI'dan so'rash / Спросить AI / Ask AI"),
-            BotCommand("ask",         "AI'dan so'rash / Спросить AI / Ask AI"),
-            BotCommand("help",        "Yordam / Помощь / Help"),
-        ])
-        print("✅ Bot komandalar ro'yxati o'rnatildi")
-
     # Создаем приложение
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .post_init(_set_commands)
-        .build()
-    )
-
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
     # Команды
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("menu", menu_command))
-    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("schedule", schedule_command))
-    app.add_handler(CommandHandler("matches", matches_command))
-    app.add_handler(CommandHandler("players", players_command))
-    app.add_handler(CommandHandler("watchparty", watchparty_command))
-    app.add_handler(CommandHandler("programs", programs_command))
     app.add_handler(CommandHandler("ask", ask_command))
-    app.add_handler(CommandHandler("ai", ask_command))
-
+    
     # Кнопки
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # Приветствие новых участников (2 способа: message-based + chat_member-based)
+    # Приветствие новых участников
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members))
-    app.add_handler(ChatMemberHandler(track_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
     # AI-чат: свободный текст (не команды). Регистрируем последним.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
@@ -1183,15 +1137,15 @@ def main():
     job_queue = app.job_queue
     if job_queue is not None:
         interval_sec = max(1, POST_INTERVAL_MINUTES) * 60
-        job_queue.run_repeating(post_countdown, interval=interval_sec, first=30)
-        print(f"⏰ Avtoposting yoqildi — har {POST_INTERVAL_MINUTES} daqiqada countdown (24/7)")
+        job_queue.run_repeating(post_news, interval=interval_sec, first=30)
+        print(f"📰 News autopost yoqildi — har {POST_INTERVAL_MINUTES} daqiqada WC2026 yangiliklari (24/7)")
     else:
         print("⚠️ JobQueue mavjud emas — avtoposting o'chirilgan")
     
     print("✅ Bot ishga tushdi!\n")
     
-    # Запуск — allowed_updates включает chat_member для приветствий
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Запуск
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
