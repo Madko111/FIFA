@@ -132,8 +132,17 @@ PROJECT_PHASE = "🟢 LAUNCH"
 # СИСТЕМА ЯЗЫКОВ
 # ============================================
 
+# Postgres backend (если DATABASE_URL задан). При отсутствии — JSON-файлы как раньше.
+try:
+    import db as _db
+    _DB_ENABLED = _db.is_enabled()
+except Exception as _e:
+    print(f"⚠️ DB module import error: {_e}")
+    _db = None
+    _DB_ENABLED = False
+
 def load_user_settings():
-    """Загружает настройки пользователей"""
+    """Загружает настройки пользователей (JSON-фоллбек, только если БД не включена)."""
     if os.path.exists(USER_SETTINGS_FILE):
         try:
             with open(USER_SETTINGS_FILE, 'r', encoding='utf-8') as f:
@@ -143,17 +152,28 @@ def load_user_settings():
     return {}
 
 def save_user_settings(settings):
-    """Сохраняет настройки пользователей"""
+    """Сохраняет настройки пользователей (JSON-фоллбек)."""
     with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 def get_user_language(user_id):
     """Получает язык пользователя"""
+    if _DB_ENABLED:
+        try:
+            return _db.get_user_language(int(user_id))
+        except Exception as e:
+            print(f"⚠️ DB get_user_language error: {e}")
     settings = load_user_settings()
     return settings.get(str(user_id), {}).get('language', None)
 
 def set_user_language(user_id, language):
     """Устанавливает язык пользователя"""
+    if _DB_ENABLED:
+        try:
+            _db.set_user_language(int(user_id), language)
+            return
+        except Exception as e:
+            print(f"⚠️ DB set_user_language error: {e}")
     settings = load_user_settings()
     if str(user_id) not in settings:
         settings[str(user_id)] = {}
@@ -167,6 +187,11 @@ def set_user_language(user_id, language):
 
 def load_kpi_data():
     """Загружает KPI данные"""
+    if _DB_ENABLED:
+        try:
+            return _db.load_kpi_data()
+        except Exception as e:
+            print(f"⚠️ DB load_kpi_data error: {e}")
     if os.path.exists(KPI_DATA_FILE):
         try:
             with open(KPI_DATA_FILE, 'r', encoding='utf-8') as f:
@@ -176,12 +201,18 @@ def load_kpi_data():
     return {"daily_stats": {}, "user_interactions": {}}
 
 def save_kpi_data(data):
-    """Сохраняет KPI данные"""
+    """Сохраняет KPI данные (JSON-фоллбек). С БД запись идёт через track_user_interaction."""
     with open(KPI_DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def track_user_interaction(user_id):
     """Отслеживает взаимодействие"""
+    if _DB_ENABLED:
+        try:
+            _db.track_user_interaction(int(user_id))
+            return
+        except Exception as e:
+            print(f"⚠️ DB track_user_interaction error: {e}")
     data = load_kpi_data()
     data['user_interactions'][str(user_id)] = datetime.now().isoformat()
     save_kpi_data(data)
@@ -277,9 +308,19 @@ def _build_ai_system_prompt(lang, is_admin=False):
     if is_admin:
         data = load_kpi_data()
         total_users = len(data.get('user_interactions', {}))
+        def _parse_ts(s):
+            try:
+                dt = datetime.fromisoformat(s)
+            except Exception:
+                return None
+            # привести к naive UTC для безопасного сравнения
+            if dt.tzinfo is not None:
+                dt = dt.astimezone().replace(tzinfo=None)
+            return dt
+        threshold = datetime.now() - timedelta(days=1)
         active_24h = len([
             u for u, t in data.get('user_interactions', {}).items()
-            if datetime.fromisoformat(t) > datetime.now() - timedelta(days=1)
+            if (_parse_ts(t) or datetime.min) > threshold
         ])
         admin_note = (
             "\n\nADMIN MODE: This user is an admin. You may also answer questions about "
