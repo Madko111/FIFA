@@ -1001,22 +1001,23 @@ def _fetch_news_articles() -> list[dict]:
 
 
 async def _format_news_post(article: dict) -> str | None:
-    """Use AI to create a trilingual Telegram post from article data."""
+    """Use AI to create an Uzbek-first Telegram post from article data."""
+    channel = CHANNEL_ID if CHANNEL_ID.startswith('@') else f"@{CHANNEL_ID}"
     prompt = (
-        f"You are a social media editor for 'Uzbek World Club' — the Uzbek fan community for FIFA World Cup 2026.\n\n"
-        f"Create a short, engaging Telegram channel post based on this news article.\n"
+        f"You are a content editor for 'Uzbek World Club' — the official Uzbek fan community for FIFA World Cup 2026.\n\n"
+        f"Write a Telegram channel post in UZBEK based on this news article.\n"
         f"Title: {article['title']}\n"
-        f"Summary: {article['summary']}\n"
-        f"Source: {article['source']}\n\n"
-        f"RULES:\n"
-        f"- Write the post THREE times: first in Uzbek, then Russian, then English, separated by ────────\n"
-        f"- Each version max 3 sentences. No fluff.\n"
-        f"- Start each with a relevant emoji\n"
-        f"- If about Uzbekistan/Uzbek team: extra enthusiasm 🇺🇿\n"
-        f"- End each version with: [Uzbek World Club]({WEBSITE_URL})\n"
-        f"- Do NOT include the source URL in the text\n"
-        f"- Use Telegram Markdown (bold=**text**, italic=_text_)\n"
-        f"- Output only the post text, nothing else"
+        f"Summary: {article['summary']}\n\n"
+        f"STRICT FORMAT RULES — follow exactly:\n"
+        f"1. Start with ONE bold headline in CAPS with a relevant emoji (e.g. ⚽ **SARLAVHA**)\n"
+        f"2. Body: 2-4 short factual sentences. No fluff. Only facts from the article.\n"
+        f"3. If about Uzbekistan/Uzbek team: add genuine enthusiasm 🇺🇿\n"
+        f"4. End with exactly these two lines (no changes):\n"
+        f"   👉 {channel}\n"
+        f"   #UzbekWorldCup #JCH2026\n\n"
+        f"STYLE: Like a sharp sports news post. Short sentences. Telegram Markdown (**bold**, _italic_).\n"
+        f"LANGUAGE: Uzbek only. No Russian. No English. No source URL.\n"
+        f"OUTPUT: Only the post text. Nothing else."
     )
     try:
         if ANTHROPIC_API_KEY:
@@ -1025,7 +1026,7 @@ async def _format_news_post(article: dict) -> str | None:
                 def _call():
                     return client.messages.create(
                         model=CLAUDE_MODEL,
-                        max_tokens=600,
+                        max_tokens=800,
                         messages=[{"role": "user", "content": prompt}],
                     )
                 resp = await asyncio.to_thread(_call)
@@ -1039,7 +1040,7 @@ async def _format_news_post(article: dict) -> str | None:
                     return client.models.generate_content(
                         model=GEMINI_MODEL,
                         contents=prompt,
-                        config=types.GenerateContentConfig(max_output_tokens=600, temperature=0.5),
+                        config=types.GenerateContentConfig(max_output_tokens=800, temperature=0.5),
                     )
                 resp = await asyncio.to_thread(_gcall)
                 return (getattr(resp, 'text', None) or '').strip() or None
