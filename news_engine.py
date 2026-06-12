@@ -178,8 +178,11 @@ def format_news_post(article, lang="uz"):
 
     if rewritten and len(rewritten) > 100:
         post = rewritten.strip()
+        # Ссылка на источник новости
         if article.get("url"):
             post += f'\n\n📰 <a href="{article["url"]}">{article["source"]}</a>'
+        # Ссылка на наш канал
+        post += '\n👉 <a href="https://t.me/uzbekworld_test">Uzbek World Cup</a>'
         return post
 
     # Если Claude недоступен — возвращаем None, пост не будет опубликован
