@@ -1,6 +1,9 @@
+# -*- coding: utf-8 -*-
 """
-NEWS ENGINE — реальный поиск и обработка новостей.
-Только реальные источники. Никакой отсебятины.
+NEWS ENGINE v3 — NewsAPI + Claude rewrite.
+
+Цепочка: NewsAPI (реальные тексты) → Claude (переписывает на uz/ru) → Telegram
+Никакого копирования заголовков. Никакого английского в итоговом посте.
 """
 
 import os
@@ -8,346 +11,293 @@ import re
 import json
 import hashlib
 import requests
-import feedparser
 from datetime import datetime, timedelta
-from difflib import SequenceMatcher
 
 
 # ============================================
-# RSS ИСТОЧНИКИ (приоритет по порядку)
+# API КЛЮЧИ
 # ============================================
 
-FEEDS = [
-    # 1. Узбекистан футбол — конкретные
-    {"url": "https://news.google.com/rss/search?q=Uzbekistan+national+football+team+2026&hl=en&gl=US&ceid=US:en", "priority": 1, "lang": "en"},
-    {"url": "https://news.google.com/rss/search?q=O%27zbekiston+terma+jamoasi&hl=uz&gl=UZ&ceid=UZ:uz", "priority": 1, "lang": "uz"},
-    {"url": "https://news.google.com/rss/search?q=%D1%81%D0%B1%D0%BE%D1%80%D0%BD%D0%B0%D1%8F+%D0%A3%D0%B7%D0%B1%D0%B5%D0%BA%D0%B8%D1%81%D1%82%D0%B0%D0%BD+%D1%84%D1%83%D1%82%D0%B1%D0%BE%D0%BB&hl=ru&gl=RU&ceid=RU:ru", "priority": 1, "lang": "ru"},
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "543701ebe5ea4056980521c43527cbb3")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 
-    # 2. Игроки сборной
-    {"url": "https://news.google.com/rss/search?q=Shomurodov+OR+Xusanov+OR+Toshmatov+2026&hl=en&gl=US&ceid=US:en", "priority": 2, "lang": "en"},
-    {"url": "https://news.google.com/rss/search?q=Shomurodov+OR+Xusanov+futbol&hl=uz&gl=UZ&ceid=UZ:uz", "priority": 2, "lang": "uz"},
 
-    # 3. ЧМ-2026 Узбекистан
-    {"url": "https://news.google.com/rss/search?q=Uzbekistan+World+Cup+2026&hl=en&gl=US&ceid=US:en", "priority": 3, "lang": "en"},
-    {"url": "https://news.google.com/rss/search?q=World+Cup+2026+Group+K&hl=en&gl=US&ceid=US:en", "priority": 3, "lang": "en"},
+# ============================================
+# NEWSAPI — ПОЛУЧЕНИЕ РЕАЛЬНЫХ НОВОСТЕЙ
+# ============================================
 
-    # 4. Соперники
-    {"url": "https://news.google.com/rss/search?q=Portugal+World+Cup+2026+Group+K&hl=en&gl=US&ceid=US:en", "priority": 4, "lang": "en"},
-    {"url": "https://news.google.com/rss/search?q=Colombia+Congo+World+Cup+2026+Group&hl=en&gl=US&ceid=US:en", "priority": 4, "lang": "en"},
-
-    # 5. FIFA официальные
-    {"url": "https://www.fifa.com/en/rss/articles", "priority": 5, "lang": "en"},
-
-    # 6. AFC
-    {"url": "https://www.the-afc.com/rss", "priority": 6, "lang": "en"},
-
-    # 7. Спортивные порталы
-    {"url": "https://feeds.bbci.co.uk/sport/football/rss.xml", "priority": 7, "lang": "en"},
-    {"url": "https://www.goal.com/feeds/en/news", "priority": 7, "lang": "en"},
-    {"url": "https://news.google.com/rss/search?q=Uzbekistan+football+FIFA&hl=en&gl=US&ceid=US:en", "priority": 7, "lang": "en"},
-
-    # 8. Локальные узбекские
-    {"url": "https://news.google.com/rss/search?q=uzreport+football&hl=uz&gl=UZ&ceid=UZ:uz", "priority": 8, "lang": "uz"},
-    {"url": "https://news.google.com/rss/search?q=championat.asia+%D1%84%D1%83%D1%82%D0%B1%D0%BE%D0%BB&hl=ru&gl=RU&ceid=RU:ru", "priority": 8, "lang": "ru"},
-]
-
-# Ключевые слова для фильтрации релевантных новостей
-RELEVANT_KEYWORDS = [
-    "uzbekistan", "o'zbekiston", "узбекистан", "uzbek",
-    "shomurodov", "шомуродов", "xusanov", "хусанов",
-    "toshmatov", "ташматов", "masharipov", "машарипов",
-    "world cup 2026", "fifa 2026", "wc2026",
-    "group k", "группа k",
-    "portugal", "colombia", "congo",
-    "afc", "чм-2026", "jahon chempionati",
-]
-
-# Стоп-слова — полностью не относящиеся новости
-STOP_KEYWORDS = [
-    "cricket", "tennis", "basketball", "baseball", "nba", "nfl",
-    "formula 1", "f1", "cycling", "swimming", "golf",
+NEWSAPI_QUERIES = [
+    "Uzbekistan national football team",
+    "Uzbekistan World Cup 2026",
+    "Shomurodov OR Xusanov OR Masharipov",
+    "FIFA World Cup 2026 Group K",
+    "World Cup 2026 Portugal Colombia Congo",
+    "Portugal World Cup 2026",
+    "Colombia World Cup 2026",
 ]
 
 
-# ============================================
-# ПАРСИНГ НОВОСТЕЙ
-# ============================================
-
-def fetch_feed(feed_info, timeout=8):
-    """Загружает один RSS фид"""
+def fetch_newsapi(query, page_size=5):
+    """Запрос к NewsAPI.org"""
+    url = "https://newsapi.org/v2/everything"
+    params = {
+        "q": query,
+        "apiKey": NEWSAPI_KEY,
+        "language": "en",
+        "sortBy": "publishedAt",
+        "pageSize": page_size,
+        "from": (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d"),
+    }
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"}
-        response = requests.get(feed_info["url"], timeout=timeout, headers=headers)
-        if response.status_code != 200:
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code != 200:
+            print(f"NewsAPI {resp.status_code}: {resp.text[:100]}")
             return []
-        
-        feed = feedparser.parse(response.content)
+        data = resp.json()
         articles = []
-        
-        for entry in feed.entries[:10]:
-            title = entry.get("title", "").strip()
-            link = entry.get("link", "").strip()
-            published = entry.get("published", "")
-
-            # Извлекаем описание из нескольких возможных полей
-            summary = ""
-            for field in ("summary", "description", "content"):
-                val = entry.get(field, "")
-                if isinstance(val, list) and val:
-                    val = val[0].get("value", "")
-                if val and len(val) > 30:
-                    summary = clean_html(str(val))
-                    break
-
-            # Источник: вытаскиваем из "Title - Source" паттерна
-            if " - " in title:
-                parts = title.rsplit(" - ", 1)
-                clean_title = parts[0].strip()
-                source_name = parts[1].strip()
-            else:
-                clean_title = title
-                source_name = (
-                    entry.get("source", {}).get("title", "")
-                    or feed.feed.get("title", "Unknown")
-                )
-
-            if not clean_title or not link:
+        for item in data.get("articles", []):
+            title = (item.get("title") or "").strip()
+            if title in ("[Removed]", "", "None"):
                 continue
-
+            content = item.get("content") or item.get("description") or ""
+            content = re.sub(r"\[\+\d+ chars\]", "", content).strip()
             articles.append({
-                "title": clean_title,
-                "link": link,
-                "summary": summary,
-                "published": published,
-                "source": source_name,
-                "priority": feed_info["priority"],
-                "lang": feed_info["lang"],
+                "title": title,
+                "content": content,
+                "description": (item.get("description") or "").strip(),
+                "url": item.get("url", ""),
+                "source": item.get("source", {}).get("name", "Unknown"),
+                "published_at": item.get("publishedAt", ""),
             })
-        
         return articles
     except Exception as e:
-        print(f"Feed error [{feed_info['url'][:60]}]: {e}")
+        print(f"NewsAPI error [{query[:40]}]: {e}")
         return []
 
 
-def clean_html(text):
-    """Очищает HTML теги"""
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'&nbsp;', ' ', text)
-    text = re.sub(r'&amp;', '&', text)
-    text = re.sub(r'&lt;', '<', text)
-    text = re.sub(r'&gt;', '>', text)
-    text = re.sub(r'&quot;', '"', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
-
-
-def is_relevant(article):
-    """Проверяет релевантность новости"""
-    text = (article["title"] + " " + article["summary"]).lower()
-    
-    # Стоп-слова — сразу отклоняем
-    for word in STOP_KEYWORDS:
-        if word in text:
-            return False
-    
-    # Проверяем наличие хотя бы одного релевантного слова
-    for keyword in RELEVANT_KEYWORDS:
-        if keyword in text:
-            return True
-    
-    return False
-
-
 def fetch_all_news():
-    """Загружает новости из всех источников"""
+    """Загружает новости из всех запросов, убирает дубликаты по URL"""
     all_articles = []
-    
-    for feed_info in FEEDS:
-        articles = fetch_feed(feed_info)
-        relevant = [a for a in articles if is_relevant(a)]
-        all_articles.extend(relevant)
-    
-    # Сортируем по приоритету
+    seen_urls = set()
+    for priority, query in enumerate(NEWSAPI_QUERIES, 1):
+        for a in fetch_newsapi(query):
+            if a["url"] not in seen_urls and a["url"]:
+                seen_urls.add(a["url"])
+                a["priority"] = priority
+                all_articles.append(a)
     all_articles.sort(key=lambda x: x["priority"])
-    
-    # Убираем дубликаты по ссылке
-    seen_links = set()
-    unique_articles = []
-    for article in all_articles:
-        if article["link"] not in seen_links:
-            seen_links.add(article["link"])
-            unique_articles.append(article)
-    
-    return unique_articles
+    return all_articles
 
 
 # ============================================
-# АНТИДУБЛИКАТ СИСТЕМА
+# CLAUDE — ПЕРЕПИСЫВАЕТ НОВОСТЬ КАК TELEGRAM-ПОСТ
+# ============================================
+
+def rewrite_with_claude(article, lang="uz"):
+    """
+    Claude переписывает новость как спортивный Telegram-пост.
+    Результат всегда на uz или ru — никакого английского.
+    """
+    if not CLAUDE_API_KEY:
+        return None
+
+    source_text = (
+        f"Title: {article['title']}\n"
+        f"Description: {article.get('description', '')}\n"
+        f"Content: {article.get('content', '')}\n"
+        f"Source: {article['source']}"
+    )
+
+    if lang == "uz":
+        prompt = f"""Siz professional sport Telegram-kanal muharriri siz.
+
+Quyidagi inglizcha yangilikni o'zbekcha sport Telegram-postga aylantiring.
+
+QOIDALAR (majburiy):
+- Post to'liq O'ZBEKCHA bo'lsin — ingliz tili mutlaqo taqiqlangan
+- Sarlavhani ko'chirish taqiqlangan — yangi, qisqa, jonli sarlavha yozing
+- Hajm: 350-600 belgi
+- Haqiqiy faktlar, raqamlar, ismlarni saqlang
+- "AI aytdi" yoki "neyroset hisobladi" — taqiqlangan
+- Sport Telegram-kanal uslubida yozing
+- 1-2 ta mos emoji (boshida)
+
+YANGILIK:
+{source_text}
+
+Faqat tayyor post matnini bering."""
+    else:
+        prompt = f"""Ты редактор спортивного Telegram-канала.
+
+Перепиши новость как Telegram-пост на РУССКОМ языке.
+
+ПРАВИЛА (обязательные):
+- Пост полностью на РУССКОМ — английский запрещён
+- Нельзя копировать заголовок — напиши короткий живой заголовок
+- Объём: 350-600 символов
+- Сохраняй реальные факты, цифры, имена
+- Запрещено: "по данным ИИ", "нейросеть считает"
+- Стиль: спортивный Telegram-канал, не газета
+- 1-2 эмодзи (в начале)
+
+НОВОСТЬ:
+{source_text}
+
+Только текст поста, без пояснений."""
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": CLAUDE_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5",
+                "max_tokens": 700,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            return resp.json()["content"][0]["text"].strip()
+        print(f"Claude error {resp.status_code}: {resp.text[:150]}")
+        return None
+    except Exception as e:
+        print(f"Claude request error: {e}")
+        return None
+
+
+def format_news_post(article, lang="uz"):
+    """
+    Формирует Telegram-пост через Claude.
+    Если Claude недоступен — возвращает None (пост не публикуется).
+    """
+    rewritten = rewrite_with_claude(article, lang=lang)
+
+    if rewritten and len(rewritten) > 100:
+        post = rewritten.strip()
+        if article.get("url"):
+            post += f'\n\n📰 <a href="{article["url"]}">{article["source"]}</a>'
+        return post
+
+    # Если Claude недоступен — возвращаем None, пост не будет опубликован
+    return None
+
+
+# ============================================
+# АНТИДУБЛИКАТ
 # ============================================
 
 HISTORY_FILE = "news_history.json"
 
 
 def load_history():
-    """Загружает историю опубликованных постов"""
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except:
-            return {"posts": [], "topics": []}
-    return {"posts": [], "topics": []}
+            pass
+    return {"posts": []}
 
 
 def save_history(history):
-    """Сохраняет историю"""
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 
 def get_content_hash(text):
-    """SHA-256 хеш для точного дубликата"""
-    clean = re.sub(r'\s+', ' ', text.lower().strip())
-    return hashlib.sha256(clean.encode()).hexdigest()
+    return hashlib.sha256(re.sub(r"\s+", " ", text.lower().strip()).encode()).hexdigest()
 
 
-def extract_topic_keywords(text):
-    """Извлекает ключевые слова для смысловой проверки"""
-    text = text.lower()
-    # Убираем стоп-слова
+def extract_keywords(text):
     stopwords = {
-        'и', 'в', 'на', 'с', 'по', 'для', 'от', 'до', 'за', 'из', 'о',
-        'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'is', 'are',
-        'was', 'will', 'has', 'have', 'that', 'this', 'with', 'from',
-        'va', 'bu', 'uchun', 'bilan', 'ga', 'da', 'ni',
+        "и","в","на","с","по","для","от","до","за","из","о",
+        "the","a","an","in","on","at","to","for","of","is","are",
+        "va","bu","uchun","bilan","ga","da","ni","was","will",
     }
-    words = re.findall(r'\b[a-zA-Zа-яА-ЯёЁa-zA-Z\u0400-\u04FF]{4,}\b', text)
+    words = re.findall(r"\b[a-zA-Zа-яА-ЯёЁ\u0400-\u04FF]{4,}\b", text.lower())
     return set(w for w in words if w not in stopwords)
 
 
-def similarity_score(text1, text2):
-    """Процент похожести двух текстов (0..1)"""
-    words1 = extract_topic_keywords(text1)
-    words2 = extract_topic_keywords(text2)
-    if not words1 or not words2:
+def similarity_score(t1, t2):
+    w1, w2 = extract_keywords(t1), extract_keywords(t2)
+    if not w1 or not w2:
         return 0.0
-    intersection = words1 & words2
-    union = words1 | words2
-    return len(intersection) / len(union)
+    return len(w1 & w2) / len(w1 | w2)
 
 
 def detect_topic(text):
-    """Определяет основную тему текста. Порядок приоритетов важен."""
-    text_lower = text.lower()
-
-    # Порядок от более специфичных к общим
-    ordered_topics = [
-        ("countdown",        ["days left", "kun qoldi", "дней осталось", "hours left", "countdown"]),
-        ("press_conference", ["press conference", "presser", "matbuot anjumani", "пресс-конференция", "anjuman"]),
-        ("transfer",         ["transfer", "signs for", "loaned", "o'tkazma", "трансфер", "перешёл", "o'tdi"]),
-        ("match_result",     ["score", "won", "lost", "draw", "natija", "счёт", "победа", "поражение", "g'alaba", "mag'lub"]),
-        ("statistics",       ["stats", "record", "statistika", "рекорд", "статистика", "ranked", "reyting", "ranking"]),
-        ("standings",        ["standing", "table", "points", "jadval", "турнирная", "таблица", "league table", "ochko"]),
-        ("interview",        ["interview", "suhbat", "интервью", "заявил", "said in", "высказался", "aytdi", "so'zladi"]),
-        ("history",          ["history", "tarix", "first time", "биринчи", "впервые", "historic", "tarixiy", "birinchi marta"]),
-        ("watch_party",      ["watch party", "fan zone", "tomoshabin", "болельщики", "viewing", "muxlis", "fan", "фанат"]),
-        ("team_news",        ["arrival", "arrived", "training camp", "squad", "tarkib", "o'quv lageri", "прибыл", "тренировочный"]),
-        ("group_analysis",   ["group k", "guruh k", "группа k", "group stage", "guruh bosqichi"]),
-        ("match_preview",    ["vs", "preview", "forecast", "prediction", "o'yin oldi", "матч", "match preview", "o'yindan oldin"]),
-        ("player_profile",   ["shomurodov", "xusanov", "masharipov", "toshmatov", "fayzullayev", "o'yinchi", "игрок", "player profile", "futbolchi"]),
-        ("wc_news",          ["world cup", "fifa", "2026", "jahon chempionati", "чм-2026", "mundial", "worldcup", "championship"]),
-        ("motivation",       ["support", "believe", "together", "qo'llab", "верим", "вместе", "birgalikda"]),
-        ("general_football", ["football", "futbol", "soccer", "match", "o'yin", "o'zbek"]),
+    tl = text.lower()
+    topics = [
+        ("countdown",        ["days left", "kun qoldi", "дней осталось"]),
+        ("press_conference", ["press conference", "пресс-конференция"]),
+        ("transfer",         ["transfer", "трансфер", "перешёл"]),
+        ("match_result",     ["score", "won", "lost", "draw", "счёт", "g'alaba"]),
+        ("statistics",       ["stats", "record", "рекорд", "statistika"]),
+        ("standings",        ["standing", "table", "таблица", "jadval"]),
+        ("interview",        ["interview", "высказался", "заявил", "suhbat"]),
+        ("history",          ["history", "впервые", "birinchi marta"]),
+        ("watch_party",      ["watch party", "болельщики", "muxlis"]),
+        ("team_news",        ["arrived", "training camp", "тренировочный"]),
+        ("group_analysis",   ["group k", "guruh k", "группа k"]),
+        ("match_preview",    ["vs", "preview", "forecast", "prediction", "матч"]),
+        ("player_profile",   ["shomurodov", "xusanov", "masharipov"]),
+        ("wc_news",          ["world cup", "fifa", "2026", "jahon chempionati"]),
+        ("general_football", ["football", "futbol", "soccer"]),
     ]
-
-    for topic, keywords in ordered_topics:
+    for topic, keywords in topics:
         for kw in keywords:
-            if kw in text_lower:
+            if kw in tl:
                 return topic
     return "other"
 
 
-def is_duplicate(new_content, history_limit=50):
-    """
-    Возвращает (True, reason) если пост — дубликат.
-    Проверяет:
-      1. Точный хеш
-      2. Схожесть > 40%
-      3. Та же тема в последних 5 постах
-    """
-    history = load_history()
-    recent_posts = history["posts"][-history_limit:]
-    
-    # 1. Точный хеш
+def is_duplicate(new_content, limit=50):
+    if not new_content:
+        return True, "empty_content"
+    recent = load_history()["posts"][-limit:]
     new_hash = get_content_hash(new_content)
-    for post in recent_posts:
+
+    for post in recent:
         if post.get("hash") == new_hash:
             return True, "exact_duplicate"
-    
-    # 2. Смысловая похожесть > 40%
-    for post in recent_posts:
-        sim = similarity_score(new_content, post.get("content", ""))
-        if sim > 0.40:
-            return True, f"semantic_duplicate (sim={sim:.2f})"
-    
-    # 3. Та же тема в последних 5 постах
-    new_topic = detect_topic(new_content)
-    if new_topic not in ("other", "wc_news"):  # wc_news — общее, разрешаем
-        recent_topics = [p.get("topic") for p in recent_posts[-5:]]
-        if recent_topics.count(new_topic) >= 2:
-            return True, f"topic_overload ({new_topic})"
-    
-    # 4. Спам-фразы — мотивация/поддержка
-    spam_phrases = [
-        "мы верим", "мы готовы", "вперёд узбекистан", "узбеки объединяются",
-        "поддержим сборную", "biz tayyormiz", "biz ishonamiz", "birgalikda",
-        "oldinga o'zbekiston", "qo'llab-quvvatlaylik",
-    ]
-    content_lower = new_content.lower()
-    for phrase in spam_phrases:
-        if phrase in content_lower:
-            # Разрешаем, если последние 24 часа не было подобного
-            cutoff = datetime.now() - timedelta(hours=24)
-            for post in recent_posts:
-                ts = post.get("timestamp", "")
-                try:
-                    if datetime.fromisoformat(ts) > cutoff:
-                        post_lower = post.get("content", "").lower()
-                        if any(p in post_lower for p in spam_phrases):
-                            return True, "motivation_spam_within_24h"
-                except:
-                    pass
-            break
-    
+        if similarity_score(new_content, post.get("content", "")) > 0.42:
+            return True, "semantic_duplicate"
+
+    spam = ["biz tayyormiz", "biz ishonamiz", "oldinga o'zbekiston",
+            "мы верим", "мы готовы", "вперёд узбекистан"]
+    if any(p in new_content.lower() for p in spam):
+        cutoff = datetime.now() - timedelta(hours=24)
+        for post in recent:
+            try:
+                if datetime.fromisoformat(post["timestamp"]) > cutoff:
+                    if any(p in post.get("content", "").lower() for p in spam):
+                        return True, "motivation_spam_24h"
+            except:
+                pass
+
     return False, None
 
 
 def mark_published(content, source_url=""):
-    """Записывает пост в историю"""
     history = load_history()
-    
-    entry = {
+    history["posts"].append({
         "hash": get_content_hash(content),
-        "content": content[:300],  # Первые 300 символов для сравнения
+        "content": content[:300],
         "topic": detect_topic(content),
         "timestamp": datetime.now().isoformat(),
         "source_url": source_url,
-    }
-    
-    history["posts"].append(entry)
-    
-    # Храним только последние 200 постов
+    })
     if len(history["posts"]) > 200:
         history["posts"] = history["posts"][-200:]
-    
     save_history(history)
 
 
 def get_last_countdown_time():
-    """Возвращает время последнего countdown поста"""
-    history = load_history()
-    for post in reversed(history["posts"]):
+    for post in reversed(load_history()["posts"]):
         if post.get("topic") == "countdown":
             try:
                 return datetime.fromisoformat(post["timestamp"])
@@ -356,81 +306,11 @@ def get_last_countdown_time():
     return None
 
 
-# ============================================
-# ФОРМАТИРОВАНИЕ ПОСТОВ
-# ============================================
-
-def format_news_post(article, lang="uz"):
-    """
-    Форматирует новость в пост для Telegram.
-    Только реальный контент — никакой отсебятины.
-    """
-    title = article["title"].strip()
-    summary = article["summary"].strip() if article["summary"] else ""
-    link = article["link"].strip()
-    source = article["source"].strip()
-
-    # Убираем артефакты из summary (дублирование заголовка источника)
-    if summary and source and summary.endswith(source):
-        summary = summary[: -len(source)].strip()
-
-    # Убираем слишком короткие (< 60 символов)
-    if len(summary) < 60:
-        summary = ""
-
-    # Обрезаем до 500 символов
-    if len(summary) > 500:
-        summary = summary[:500].rstrip() + "..."
-
-    # Определяем эмодзи по теме
-    topic = detect_topic(title + " " + summary)
-    emoji_map = {
-        "player_profile":   "⚽️",
-        "match_preview":    "🔮",
-        "match_result":     "🏆",
-        "standings":        "📊",
-        "transfer":         "🔄",
-        "interview":        "🎙",
-        "statistics":       "📈",
-        "history":          "📜",
-        "press_conference": "📢",
-        "watch_party":      "🎉",
-        "team_news":        "🏋️",
-        "group_analysis":   "🗂",
-        "wc_news":          "🌍",
-        "countdown":        "⏰",
-        "motivation":       "💪",
-        "general_football": "⚽️",
-    }
-    emoji = emoji_map.get(topic, "📰")
-
-    # Строим пост
-    parts = [f"{emoji} <b>{title}</b>"]
-
-    if summary:
-        parts.append("")
-        parts.append(summary)
-
-    parts.append("")
-    parts.append(f'📰 <a href="{link}">{source}</a>')
-
-    return "\n".join(parts)
+def get_days_until_first_match():
+    return max(0, (datetime(2026, 6, 17) - datetime.now()).days)
 
 
 def format_countdown_post(days, lang="uz"):
-    """
-    Пост с обратным отсчётом. Только 1 раз в сутки.
-    """
-    match_info = {
-        "uz": f"O'zbekiston vs 🇵🇹 Portugaliya — {days} kun qoldi!\n\n17-iyun, 21:00 | NRG Stadium, Hyuston",
-        "ru": f"Узбекистан vs 🇵🇹 Португалия — {days} дней!\n\n17 июня, 21:00 | NRG Stadium, Хьюстон",
-        "en": f"Uzbekistan vs 🇵🇹 Portugal — {days} days left!\n\nJune 17, 21:00 | NRG Stadium, Houston",
-    }
-    return f"⏰ {match_info.get(lang, match_info['uz'])}"
-
-
-def get_days_until_first_match():
-    """Дней до первого матча"""
-    first_match = datetime(2026, 6, 17)
-    delta = first_match - datetime.now()
-    return max(0, delta.days)
+    if lang == "uz":
+        return f"⏰ O'zbekiston vs 🇵🇹 Portugaliya — <b>{days} kun qoldi!</b>\n\n17-iyun, 21:00 | NRG Stadium, Hyuston\n\n#UzbekWorldCup"
+    return f"⏰ Узбекистан vs 🇵🇹 Португалия — <b>{days} дней!</b>\n\n17 июня, 21:00 | NRG Stadium, Хьюстон\n\n#UzbekWorldCup"

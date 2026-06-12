@@ -190,13 +190,17 @@ async def run_auto_post():
     
     posted = False
     for article in articles:
+        # Claude обязателен — если недоступен, возвращает None → пропускаем
         post_text = format_news_post(article, lang="uz")
-        
+        if not post_text:
+            print(f"  ⏭ Claude недоступен: {article['title'][:50]}")
+            continue
+
         dup, reason = is_duplicate(post_text)
         if dup:
             print(f"  ⛔ Дубликат ({reason}): {article['title'][:60]}")
             continue
-        
+
         try:
             await bot.send_message(
                 chat_id=CHANNEL_ID,
@@ -204,7 +208,7 @@ async def run_auto_post():
                 parse_mode="HTML",
                 disable_web_page_preview=False,
             )
-            mark_published(post_text, source_url=article["link"])
+            mark_published(post_text, source_url=article.get("url", ""))
             print(f"  ✅ Опубликовано: {article['title'][:60]}")
             posted = True
             break
