@@ -23,6 +23,42 @@ CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 
 
 # ============================================
+# TELEGRAM КАНАЛЫ — ИСТОЧНИК ПРИОРИТЕТ 0
+# ============================================
+
+def fetch_tg_channel_posts():
+    """
+    Читает посты из Telegram каналов-источников.
+    Требует TG_API_ID и TG_API_HASH в .env.
+    Возвращает список в формате как NewsAPI articles.
+    """
+    try:
+        from tg_scraper import get_tg_posts_sync
+        raw_posts = get_tg_posts_sync(hours_back=12)
+
+        articles = []
+        for post in raw_posts:
+            text = post["text"]
+            if len(text) < 50:
+                continue
+            articles.append({
+                "title":       text[:80].replace("\n", " "),  # первая строка как заголовок
+                "content":     text,
+                "description": text[:200],
+                "url":         "",
+                "urlToImage":  None,
+                "source":      "tg_channel",  # скрыто от читателя
+                "published_at": post["date"].isoformat(),
+                "priority":    0,  # выше NewsAPI
+                "is_tg_post":  True,
+            })
+        return articles
+    except Exception as e:
+        print(f"TG channel fetch error: {e}")
+        return []
+
+
+# ============================================
 # NEWSAPI — ПОЛУЧЕНИЕ РЕАЛЬНЫХ НОВОСТЕЙ
 # ============================================
 
@@ -125,10 +161,25 @@ def is_relevant_article(article):
 
 
 def fetch_all_news():
-    """Загружает новости, фильтрует нерелевантные, сортирует по приоритету"""
+    """
+    Загружает новости из всех источников:
+    1. Telegram каналы (приоритет 0 — самый высокий)
+    2. NewsAPI (приоритет 1-3)
+    Фильтрует нерелевантные, сортирует по приоритету.
+    """
     all_articles = []
-    seen_urls = set()
+    seen_texts = set()
 
+    # Источник 0: Telegram каналы (если настроены)
+    tg_posts = fetch_tg_channel_posts()
+    for a in tg_posts:
+        key = a["content"][:100]
+        if key not in seen_texts:
+            seen_texts.add(key)
+            all_articles.append(a)
+
+    # Источник 1+: NewsAPI
+    seen_urls = set()
     for query_info in NEWSAPI_QUERIES:
         for a in fetch_newsapi(query_info):
             if a["url"] in seen_urls or not a["url"]:
@@ -158,12 +209,59 @@ def rewrite_with_claude(article, lang="uz"):
     if not CLAUDE_API_KEY:
         return None
 
+    # TG-посты уже на uz/ru — просто редактируем, не переводим
+    is_tg = article.get("is_tg_post", False)
+
     source_text = (
         f"Title: {article['title']}\n"
         f"Description: {article.get('description', '')}\n"
         f"Content: {article.get('content', '')}\n"
         f"Source: {article['source']}"
     )
+
+    if is_tg:
+        # Для TG-постов: редактируем, не переводим
+        prompt = f"""Sen sport Telegram-kanal muharriri siz. Quyidagi postni qayta ishlang.
+
+VAZIFA:
+- Matnni to'g'ri formatlang (sarlavha + 1-2 qisqa abzas)
+- Manbaga havola, sayt nomi, kanal nomi — olib tashlang
+- Keraksiz takrorlarni olib tashlang
+- Hajm: 200-350 belgi
+- Til: original tilida qoldiring (o'zbek yoki rus)
+- Hech qanday URL, @ va havola bo'lmasin
+
+FORMAT:
+[emoji] Sarlavha
+
+Abzas 1.
+
+Abzas 2.
+
+ORIGINAL POST:
+{article['content']}
+
+Faqat tayyor post."""
+        try:
+            resp = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": CLAUDE_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5",
+                    "max_tokens": 500,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                return resp.json()["content"][0]["text"].strip()
+        except Exception as e:
+            print(f"Claude TG error: {e}")
+        return None
 
     if lang == "uz":
         prompt = f"""Sen O'zbekiston futboli haqidagi Telegram-kanal muharririsiz. Quyidagi inglizcha manbadan o'zbek tilidagi yangilik post yoz.
