@@ -88,7 +88,22 @@ def fetch_channel_posts(channel_name, limit=10):
             except Exception:
                 date = datetime.now()
 
-            posts.append({"text": text, "photo": photo_url, "date": date})
+            # Определяем приоритет по теме (не по источнику)
+            text_lower_check = text.lower()
+            if any(kw in text_lower_check for kw in [
+                "o'zbekiston", "узбекистан", "uzbekistan", "shomurodov", "xusanov",
+                "masharipov", "toshmatov", "o'zbek terma", "milliy jamoasi", "сборная узбек"
+            ]):
+                topic_priority = 1  # Про Узбекистан — высший приоритет
+            elif any(kw in text_lower_check for kw in [
+                "portugal", "colombia", "congo", "group k", "guruh k",
+                "portugal", "kolumbiya", "группа k"
+            ]):
+                topic_priority = 2  # Про соперников/группу
+            else:
+                topic_priority = 3  # Общие новости ЧМ
+
+            posts.append({"text": text, "photo": photo_url, "date": date, "priority": topic_priority})
 
         return posts
 
@@ -114,7 +129,7 @@ def get_tg_posts(limit_per_channel=5):
                 "urlToImage":   post["photo"],
                 "source":       "tg_channel",
                 "published_at": post["date"].isoformat(),
-                "priority":     0,
+                "priority":     post["priority"],  # Приоритет по теме
                 "is_tg_post":   True,
             })
 
