@@ -190,11 +190,13 @@ async def run_auto_post():
     
     posted = False
     for article in articles:
-        # Claude обязателен — если недоступен, возвращает None → пропускаем
-        post_text = format_news_post(article, lang="uz")
-        if not post_text:
-            print(f"  ⏭ Claude недоступен: {article['title'][:50]}")
+        result = format_news_post(article, lang="uz")
+        if not result:
+            print(f"  ⏭ Пропуск: {article['title'][:50]}")
             continue
+
+        post_text = result["text"]
+        image_url  = result.get("image")
 
         dup, reason = is_duplicate(post_text)
         if dup:
@@ -202,14 +204,35 @@ async def run_auto_post():
             continue
 
         try:
-            await bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=post_text,
-                parse_mode="HTML",
-                disable_web_page_preview=False,
-            )
+            if image_url:
+                # Пробуем отправить с фото
+                try:
+                    await bot.send_photo(
+                        chat_id=CHANNEL_ID,
+                        photo=image_url,
+                        caption=post_text,
+                        parse_mode="HTML",
+                    )
+                    print(f"  ✅ Опубликовано с фото: {article['title'][:55]}")
+                except Exception:
+                    # Фото не подошло — публикуем только текст
+                    await bot.send_message(
+                        chat_id=CHANNEL_ID,
+                        text=post_text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                    print(f"  ✅ Опубликовано (текст): {article['title'][:55]}")
+            else:
+                await bot.send_message(
+                    chat_id=CHANNEL_ID,
+                    text=post_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                print(f"  ✅ Опубликовано: {article['title'][:55]}")
+
             mark_published(post_text, source_url=article.get("url", ""))
-            print(f"  ✅ Опубликовано: {article['title'][:60]}")
             posted = True
             break
         except Exception as e:

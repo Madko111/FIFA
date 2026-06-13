@@ -184,7 +184,8 @@ Ikkinchi abzas — qo'shimcha detal.
 (Kerak bo'lsa uchinchi abzas)
 
 QOIDALAR:
-- Hajm: 250-450 ta belgi (sarlavhasiz)
+- Hajm: 200-350 ta belgi (sarlavhasiz)
+- Takrorlanuvchi fikrlarni, kirish so'zlarni va keraksiz jumlalarni olib tashla
 - FAQAT O'ZBEK TILI — inglizcha so'z bo'lmasin
 - Hech qanday URL, havola, sayt nomi yozma
 - Pafosdan saqlaning: "tarixiy lahza", "butun dunyo kutmoqda" — taqiqlangan
@@ -215,7 +216,8 @@ Faqat tayyor post matni. Izoh yozma."""
 (Третий если нужен)
 
 ПРАВИЛА:
-- Объём: 250-450 символов (без заголовка)
+- Объём: 200-350 символов (без заголовка)
+- Убирай повторяющиеся мысли, лишние вводные, очевидные фразы без фактов
 - ТОЛЬКО РУССКИЙ ЯЗЫК
 - Никаких URL, ссылок, названий сайтов
 - Без пафоса: "исторический момент", "весь мир следит" — запрещено
@@ -253,10 +255,76 @@ Faqat tayyor post matni. Izoh yozma."""
         return None
 
 
+def extract_image_url(article):
+    """
+    Извлекает изображение статьи.
+    Приоритет: urlToImage из NewsAPI → og:image из страницы.
+    Фильтрует логотипы, баннеры, иконки.
+    """
+    # 1. NewsAPI сам возвращает urlToImage
+    img = article.get("urlToImage") or article.get("image_url") or ""
+    if img and _is_valid_image(img):
+        return img
+
+    # 2. Пытаемся вытащить og:image из страницы статьи
+    url = article.get("url", "")
+    if not url:
+        return None
+    try:
+        resp = requests.get(url, timeout=6, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"
+        })
+        if resp.status_code != 200:
+            return None
+        # Ищем og:image
+        match = re.search(
+            r'<meta[^>]+(?:property=["\']og:image["\']|name=["\']og:image["\'])[^>]+content=["\']([^"\']+)["\']',
+            resp.text, re.IGNORECASE
+        )
+        if not match:
+            match = re.search(
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property=["\']og:image["\'])',
+                resp.text, re.IGNORECASE
+            )
+        if match:
+            img_url = match.group(1).strip()
+            if _is_valid_image(img_url):
+                return img_url
+    except Exception:
+        pass
+
+    return None
+
+
+def _is_valid_image(url):
+    """Проверяет, подходит ли изображение для публикации"""
+    if not url or len(url) < 10:
+        return False
+
+    url_lower = url.lower()
+
+    # Фильтруем явно плохие
+    bad_patterns = [
+        "logo", "icon", "favicon", "banner", "ad_", "ads_", "advert",
+        "pixel.gif", "1x1", "tracking", "beacon", "placeholder",
+        "avatar", "profile_pic", "spinner", "loading",
+    ]
+    for bad in bad_patterns:
+        if bad in url_lower:
+            return False
+
+    # Должен быть обычный изображение-URL
+    if not any(ext in url_lower for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]):
+        # Разрешаем URL без расширения (CDN часто так делают)
+        if "image" not in url_lower and "photo" not in url_lower and "media" not in url_lower:
+            return True  # Даём шанс — проверим по размеру при отправке
+    return True
+
+
 def format_news_post(article, lang="uz"):
     """
     Формирует Telegram-пост через Claude.
-    Если Claude недоступен — возвращает None (пост не публикуется).
+    Возвращает dict {"text": str, "image": str|None} или None.
     """
     rewritten = rewrite_with_claude(article, lang=lang)
 
@@ -264,9 +332,13 @@ def format_news_post(article, lang="uz"):
         post = validate_post(rewritten.strip())
         if not post:
             return None
-        # Только ссылка на наш канал — источник скрыт
+
         post += '\n\n👉 <a href="https://t.me/uzbekworld_test">Uzbek World Cup</a>'
-        return post
+
+        # Ищем изображение
+        image_url = extract_image_url(article)
+
+        return {"text": post, "image": image_url}
 
     return None
 
