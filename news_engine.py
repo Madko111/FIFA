@@ -27,21 +27,44 @@ CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 # ============================================
 
 NEWSAPI_QUERIES = [
-    "Uzbekistan national football team",
-    "Uzbekistan World Cup 2026",
-    "Shomurodov OR Xusanov OR Masharipov",
-    "FIFA World Cup 2026 Group K",
-    "World Cup 2026 Portugal Colombia Congo",
-    "Portugal World Cup 2026",
-    "Colombia World Cup 2026",
+    # Приоритет 1 — Сборная Узбекистана и игроки (самые важные)
+    {"q": "Uzbekistan national football team 2026",      "priority": 1},
+    {"q": "Uzbekistan soccer squad World Cup",           "priority": 1},
+    {"q": "Shomurodov footballer 2026",                  "priority": 1},
+    {"q": "Xusanov Lens defender World Cup",             "priority": 1},
+    {"q": "Masharipov Uzbekistan footballer",            "priority": 1},
+    # Приоритет 2 — Матчи и группа Узбекистана
+    {"q": "Uzbekistan Portugal World Cup match",         "priority": 2},
+    {"q": "Uzbekistan Colombia World Cup match",         "priority": 2},
+    {"q": "Uzbekistan Congo World Cup Group K",          "priority": 2},
+    {"q": "Group K World Cup 2026 Uzbekistan",           "priority": 2},
+    # Приоритет 3 — ЧМ-2026 общее
+    {"q": "FIFA World Cup 2026 news",                    "priority": 3},
+    {"q": "World Cup 2026 Group K standings",            "priority": 3},
+]
+
+# Ключевые слова которые ОБЯЗАТЕЛЬНО должны быть в статье
+MANDATORY_KEYWORDS = [
+    "uzbekistan", "o'zbekiston", "shomurodov", "xusanov", "masharipov",
+    "toshmatov", "katanec", "group k", "world cup 2026", "fifa 2026",
+    "portugal", "colombia", "congo dr",
+]
+
+# Стоп-слова — статьи с ними однозначно не про нашу тему
+STOP_KEYWORDS = [
+    "betting guide", "how to bet", "odds", "bookmaker", "zizobet",
+    "sneakers", "shoes", "bape", "fashion", "trump", "politics",
+    "socceroos", "australia vs", "canada vs bosnia", "nigeria",
+    "iran vs new zealand", "brown line", "chicago reader",
+    "naked capitalism", "reverse midas",
 ]
 
 
-def fetch_newsapi(query, page_size=5):
+def fetch_newsapi(query_info, page_size=5):
     """Запрос к NewsAPI.org"""
     url = "https://newsapi.org/v2/everything"
     params = {
-        "q": query,
+        "q": query_info["q"],
         "apiKey": NEWSAPI_KEY,
         "language": "en",
         "sortBy": "publishedAt",
@@ -68,24 +91,58 @@ def fetch_newsapi(query, page_size=5):
                 "url": item.get("url", ""),
                 "source": item.get("source", {}).get("name", "Unknown"),
                 "published_at": item.get("publishedAt", ""),
+                "priority": query_info["priority"],
             })
         return articles
     except Exception as e:
-        print(f"NewsAPI error [{query[:40]}]: {e}")
+        print(f"NewsAPI error [{query_info['q'][:40]}]: {e}")
         return []
 
 
+def is_relevant_article(article):
+    """
+    Жёсткий фильтр релевантности ПЕРЕД отправкой в Claude.
+    Возвращает (True, reason) или (False, reason).
+    """
+    text = f"{article['title']} {article['description']} {article['content']}".lower()
+
+    # 1. Стоп-слова — сразу отклоняем
+    for stop in STOP_KEYWORDS:
+        if stop in text:
+            return False, f"стоп-слово: '{stop}'"
+
+    # 2. Обязательное слово — статья ДОЛЖНА быть про нашу тему
+    has_mandatory = any(kw in text for kw in MANDATORY_KEYWORDS)
+    if not has_mandatory:
+        return False, "нет ключевых слов (Узбекистан/игроки/группа)"
+
+    # 3. Минимальная длина контента
+    content_len = len(article.get("content") or article.get("description") or "")
+    if content_len < 80:
+        return False, "слишком мало текста"
+
+    return True, "OK"
+
+
 def fetch_all_news():
-    """Загружает новости из всех запросов, убирает дубликаты по URL"""
+    """Загружает новости, фильтрует нерелевантные, сортирует по приоритету"""
     all_articles = []
     seen_urls = set()
-    for priority, query in enumerate(NEWSAPI_QUERIES, 1):
-        for a in fetch_newsapi(query):
-            if a["url"] not in seen_urls and a["url"]:
-                seen_urls.add(a["url"])
-                a["priority"] = priority
-                all_articles.append(a)
-    all_articles.sort(key=lambda x: x["priority"])
+
+    for query_info in NEWSAPI_QUERIES:
+        for a in fetch_newsapi(query_info):
+            if a["url"] in seen_urls or not a["url"]:
+                continue
+            seen_urls.add(a["url"])
+
+            relevant, reason = is_relevant_article(a)
+            if not relevant:
+                continue
+
+            all_articles.append(a)
+
+    # Сортируем: сначала по приоритету, потом по свежести
+    all_articles.sort(key=lambda x: (x["priority"], x.get("published_at", "")))
     return all_articles
 
 
@@ -109,41 +166,68 @@ def rewrite_with_claude(article, lang="uz"):
     )
 
     if lang == "uz":
-        prompt = f"""Siz tajribali sport Telegram-muharriri siz. Quyidagi yangilikdan qisqa, ta'sirchan o'zbek tilida post yozing.
+        prompt = f"""Sen O'zbekiston futboli haqidagi Telegram-kanal muharririsiz. Quyidagi inglizcha manbadan o'zbek tilidagi yangilik post yoz.
 
-QATTIQ TALABLAR:
-1. FAQAT O'ZBEK TILI — birorta inglizcha so'z bo'lmasin
-2. Hajm: 150-300 belgi (2-4 qisqa abzas)
-3. Format: [emoji] Sarlavha\n\nAbzas 1.\n\nAbzas 2.
-4. Sarlavha: qisqa, jonli, 5-8 so'z
-5. Haqiqiy faktlar va raqamlarni saqlang
-6. Suvni, takrorlarni, quruq iboralarni olib tashlang
-7. Hech qanday havola, sayt nomi, URL yozmang
-8. "AI", "neyroset", "tarjima" so'zlarini yozmang
-9. Erkin, jonli o'zbek tilida yozing — mashina tarjimasidan saqlanin
+SEN JURNALISTSIZ, TARJIMON EMASSAN:
+- Matnni so'zma-so'z tarjima qilma
+- Avval asosiy fikrni tushun, keyin o'zbek tilida o'z so'zingda yoz
+- Tabiiy, jonli o'zbek tili ishlatilsin
+- Ingliz tilining konstruksiyalarini nusxalama
+
+FORMAT (qat'iy):
+[1 ta emoji] Qisqa sarlavha (maqola sarlavhasini ko'chirma, yangi yoz)
+
+Birinchi abzas — eng muhim ma'lumot.
+
+Ikkinchi abzas — qo'shimcha detal.
+
+(Kerak bo'lsa uchinchi abzas)
+
+QOIDALAR:
+- Hajm: 250-450 ta belgi (sarlavhasiz)
+- FAQAT O'ZBEK TILI — inglizcha so'z bo'lmasin
+- Hech qanday URL, havola, sayt nomi yozma
+- Pafosdan saqlaning: "tarixiy lahza", "butun dunyo kutmoqda" — taqiqlangan
+- Faqat haqiqiy faktlar
+- Oddiy, tushinarli til — sport xabari sifatida
+
+TAQIQLANGAN IBORALAR: "tarixiy lahza", "afsonaviy", "dunyoning eng muhim", "barcha ko'zlar"
 
 YANGILIK MATNI:
 {source_text}
 
-Faqat post matni. Boshqa hech narsa."""
+Faqat tayyor post matni. Izoh yozma."""
     else:
-        prompt = f"""Ты опытный редактор спортивного Telegram-канала. Напиши короткий живой пост на русском по этой новости.
+        prompt = f"""Ты редактор Telegram-канала про сборную Узбекистана. Напиши пост на русском по этой новости.
 
-ЖЁСТКИЕ ТРЕБОВАНИЯ:
-1. ТОЛЬКО РУССКИЙ ЯЗЫК — ни слова по-английски
-2. Объём: 150-300 символов (2-4 коротких абзаца)
-3. Формат: [emoji] Заголовок\n\nАбзац 1.\n\nАбзац 2.
-4. Заголовок: короткий, живой, 4-7 слов
-5. Сохраняй реальные факты и цифры
-6. Убирай воду, повторения, пустые фразы
-7. Никаких ссылок, URL, названий сайтов
-8. Не писать "ИИ", "нейросеть", "перевод"
-9. Пиши как спортивный журналист, не переводчик
+ТЫ ЖУРНАЛИСТ, НЕ ПЕРЕВОДЧИК:
+- Не переводи слово в слово
+- Сначала пойми смысл, потом напиши своими словами
+- Пиши как русскоязычный спортивный журналист
+
+ФОРМАТ (строго):
+[1 эмодзи] Короткий заголовок (придумай новый, не копируй из статьи)
+
+Первый абзац — самое важное.
+
+Второй абзац — детали.
+
+(Третий если нужен)
+
+ПРАВИЛА:
+- Объём: 250-450 символов (без заголовка)
+- ТОЛЬКО РУССКИЙ ЯЗЫК
+- Никаких URL, ссылок, названий сайтов
+- Без пафоса: "исторический момент", "весь мир следит" — запрещено
+- Только реальные факты
+- Естественный язык
+
+ЗАПРЕЩЁННЫЕ ФРАЗЫ: "исторический момент", "легендарное противостояние", "весь мир замер", "эпохальный"
 
 ТЕКСТ НОВОСТИ:
 {source_text}
 
-Только текст поста. Ничего лишнего."""
+Только текст поста. Никаких пояснений."""
 
     try:
         resp = requests.post(
