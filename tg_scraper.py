@@ -1,105 +1,93 @@
 # -*- coding: utf-8 -*-
 """
-Telegram Channel Scraper — читает посты из каналов-источников.
-Использует Telethon (user account, не бот).
-
-Каналы-источники:
-  - @ZorTv_GollarTv
-  - @Davron_Fayziev
-
-Источники НЕ указываются в итоговом посте.
+Telegram Channel Scraper — читает публичные каналы через t.me/s/
+Не требует авторизации. Работает с любым публичным каналом.
 """
 
-import os
-import asyncio
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
+import re
+import requests
+from datetime import datetime
+from bs4 import BeautifulSoup
 
-load_dotenv()
-
-# Telethon требует API ID и API Hash от my.telegram.org
-TG_API_ID   = int(os.getenv("TG_API_ID", "0"))
-TG_API_HASH = os.getenv("TG_API_HASH", "")
-TG_SESSION  = "tg_session"  # имя файла сессии
-
-# Каналы-источники
 SOURCE_CHANNELS = [
-    "@ZorTv_GollarTv",
-    "@Davron_Fayziev",
+    "ZorTv_GollarTv",
+    "Davron_Fayziev",
 ]
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "ru,en;q=0.9",
+}
 
-async def fetch_channel_posts(channel, limit=10, hours_back=24):
-    """
-    Читает последние посты из канала за последние N часов.
-    Возвращает список {"text": str, "date": datetime, "channel": str}
-    """
+
+def fetch_channel_posts(channel_name, limit=10):
+    """Парсит публичный Telegram-канал через t.me/s/"""
+    url = f"https://t.me/s/{channel_name}"
     try:
-        from telethon import TelegramClient
-        from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code != 200:
+            print(f"  ❌ {channel_name}: HTTP {resp.status_code}")
+            return []
 
-        client = TelegramClient(TG_SESSION, TG_API_ID, TG_API_HASH)
-        await client.start()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        messages = soup.find_all("div", class_="tgme_widget_message_wrap")
 
-        cutoff = datetime.now() - timedelta(hours=hours_back)
         posts = []
-
-        async for msg in client.iter_messages(channel, limit=limit):
-            if not msg.date:
-                continue
-            # Telethon возвращает UTC
-            msg_date = msg.date.replace(tzinfo=None)
-            if msg_date < cutoff:
-                break
-
-            text = msg.text or msg.message or ""
-            text = text.strip()
-
-            # Пропускаем слишком короткие (реклама, стикеры)
+        for msg in messages[-limit:]:
+            # Текст
+            text_el = msg.find("div", class_="tgme_widget_message_text")
+            text = text_el.get_text(separator="\n").strip() if text_el else ""
             if len(text) < 50:
                 continue
 
-            # Фото из поста (если есть)
+            # Фото
             photo_url = None
-            if hasattr(msg, "media") and isinstance(msg.media, MessageMediaPhoto):
-                # Telethon не даёт прямой URL, но мы можем передать media объект
-                photo_url = msg.media  # передадим как объект для скачивания
+            photo_el = msg.find("a", class_="tgme_widget_message_photo_wrap")
+            if photo_el:
+                style = photo_el.get("style", "")
+                match = re.search(r"url\('?([^')]+)'?\)", style)
+                if match:
+                    photo_url = match.group(1)
 
-            posts.append({
-                "text":    text,
-                "date":    msg_date,
-                "channel": channel,
-                "photo":   photo_url,
-                "msg_id":  msg.id,
-            })
+            # Дата
+            date_el = msg.find("time")
+            date_str = date_el.get("datetime", "") if date_el else ""
+            try:
+                date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                date = datetime.now()
 
-        await client.disconnect()
+            posts.append({"text": text, "photo": photo_url, "date": date})
+
         return posts
 
     except Exception as e:
-        print(f"tg_scraper error [{channel}]: {e}")
+        print(f"  ❌ {channel_name}: {e}")
         return []
 
 
-async def fetch_all_tg_posts(hours_back=12):
-    """Читает посты из всех каналов-источников"""
-    all_posts = []
+def get_tg_posts(limit_per_channel=5):
+    """Читает посты из всех каналов, возвращает в формате news_engine"""
+    all_articles = []
+
     for channel in SOURCE_CHANNELS:
-        posts = await fetch_channel_posts(channel, limit=20, hours_back=hours_back)
-        all_posts.extend(posts)
-        print(f"  {channel}: {len(posts)} постов")
+        posts = fetch_channel_posts(channel, limit=limit_per_channel)
+        print(f"  @{channel}: {len(posts)} постов")
 
-    # Сортируем по дате (свежие первые)
-    all_posts.sort(key=lambda x: x["date"], reverse=True)
-    return all_posts
+        for post in posts:
+            all_articles.append({
+                "title":        post["text"][:80].replace("\n", " "),
+                "content":      post["text"],
+                "description":  post["text"][:200],
+                "url":          f"https://t.me/{channel}",
+                "urlToImage":   post["photo"],
+                "source":       "tg_channel",
+                "published_at": post["date"].isoformat(),
+                "priority":     0,
+                "is_tg_post":   True,
+            })
 
-
-def get_tg_posts_sync(hours_back=12):
-    """Синхронная обёртка для вызова из news_engine"""
-    if not TG_API_ID or not TG_API_HASH:
-        return []
-    try:
-        return asyncio.run(fetch_all_tg_posts(hours_back=hours_back))
-    except Exception as e:
-        print(f"tg_scraper sync error: {e}")
-        return []
+    all_articles.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+    return all_articles

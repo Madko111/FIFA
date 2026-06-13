@@ -33,26 +33,10 @@ def fetch_tg_channel_posts():
     Возвращает список в формате как NewsAPI articles.
     """
     try:
-        from tg_scraper import get_tg_posts_sync
-        raw_posts = get_tg_posts_sync(hours_back=12)
+        from tg_scraper import get_tg_posts
+        raw_posts = get_tg_posts(limit_per_channel=10)
 
-        articles = []
-        for post in raw_posts:
-            text = post["text"]
-            if len(text) < 50:
-                continue
-            articles.append({
-                "title":       text[:80].replace("\n", " "),  # первая строка как заголовок
-                "content":     text,
-                "description": text[:200],
-                "url":         "",
-                "urlToImage":  None,
-                "source":      "tg_channel",  # скрыто от читателя
-                "published_at": post["date"].isoformat(),
-                "priority":    0,  # выше NewsAPI
-                "is_tg_post":  True,
-            })
-        return articles
+        return raw_posts  # уже в нужном формате из tg_scraper
     except Exception as e:
         print(f"TG channel fetch error: {e}")
         return []
