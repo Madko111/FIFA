@@ -109,41 +109,41 @@ def rewrite_with_claude(article, lang="uz"):
     )
 
     if lang == "uz":
-        prompt = f"""Siz professional sport Telegram-kanal muharriri siz.
+        prompt = f"""Siz tajribali sport Telegram-muharriri siz. Quyidagi yangilikdan qisqa, ta'sirchan o'zbek tilida post yozing.
 
-Quyidagi inglizcha yangilikni o'zbekcha sport Telegram-postga aylantiring.
+QATTIQ TALABLAR:
+1. FAQAT O'ZBEK TILI — birorta inglizcha so'z bo'lmasin
+2. Hajm: 150-300 belgi (2-4 qisqa abzas)
+3. Format: [emoji] Sarlavha\n\nAbzas 1.\n\nAbzas 2.
+4. Sarlavha: qisqa, jonli, 5-8 so'z
+5. Haqiqiy faktlar va raqamlarni saqlang
+6. Suvni, takrorlarni, quruq iboralarni olib tashlang
+7. Hech qanday havola, sayt nomi, URL yozmang
+8. "AI", "neyroset", "tarjima" so'zlarini yozmang
+9. Erkin, jonli o'zbek tilida yozing — mashina tarjimasidan saqlanin
 
-QOIDALAR (majburiy):
-- Post to'liq O'ZBEKCHA bo'lsin — ingliz tili mutlaqo taqiqlangan
-- Sarlavhani ko'chirish taqiqlangan — yangi, qisqa, jonli sarlavha yozing
-- Hajm: 350-600 belgi
-- Haqiqiy faktlar, raqamlar, ismlarni saqlang
-- "AI aytdi" yoki "neyroset hisobladi" — taqiqlangan
-- Sport Telegram-kanal uslubida yozing
-- 1-2 ta mos emoji (boshida)
-
-YANGILIK:
+YANGILIK MATNI:
 {source_text}
 
-Faqat tayyor post matnini bering."""
+Faqat post matni. Boshqa hech narsa."""
     else:
-        prompt = f"""Ты редактор спортивного Telegram-канала.
+        prompt = f"""Ты опытный редактор спортивного Telegram-канала. Напиши короткий живой пост на русском по этой новости.
 
-Перепиши новость как Telegram-пост на РУССКОМ языке.
+ЖЁСТКИЕ ТРЕБОВАНИЯ:
+1. ТОЛЬКО РУССКИЙ ЯЗЫК — ни слова по-английски
+2. Объём: 150-300 символов (2-4 коротких абзаца)
+3. Формат: [emoji] Заголовок\n\nАбзац 1.\n\nАбзац 2.
+4. Заголовок: короткий, живой, 4-7 слов
+5. Сохраняй реальные факты и цифры
+6. Убирай воду, повторения, пустые фразы
+7. Никаких ссылок, URL, названий сайтов
+8. Не писать "ИИ", "нейросеть", "перевод"
+9. Пиши как спортивный журналист, не переводчик
 
-ПРАВИЛА (обязательные):
-- Пост полностью на РУССКОМ — английский запрещён
-- Нельзя копировать заголовок — напиши короткий живой заголовок
-- Объём: 350-600 символов
-- Сохраняй реальные факты, цифры, имена
-- Запрещено: "по данным ИИ", "нейросеть считает"
-- Стиль: спортивный Telegram-канал, не газета
-- 1-2 эмодзи (в начале)
-
-НОВОСТЬ:
+ТЕКСТ НОВОСТИ:
 {source_text}
 
-Только текст поста, без пояснений."""
+Только текст поста. Ничего лишнего."""
 
     try:
         resp = requests.post(
@@ -176,17 +176,49 @@ def format_news_post(article, lang="uz"):
     """
     rewritten = rewrite_with_claude(article, lang=lang)
 
-    if rewritten and len(rewritten) > 100:
-        post = rewritten.strip()
-        # Ссылка на источник новости
-        if article.get("url"):
-            post += f'\n\n📰 <a href="{article["url"]}">{article["source"]}</a>'
-        # Ссылка на наш канал
-        post += '\n👉 <a href="https://t.me/uzbekworld_test">Uzbek World Cup</a>'
+    if rewritten and len(rewritten) > 80:
+        post = validate_post(rewritten.strip())
+        if not post:
+            return None
+        # Только ссылка на наш канал — источник скрыт
+        post += '\n\n👉 <a href="https://t.me/uzbekworld_test">Uzbek World Cup</a>'
         return post
 
-    # Если Claude недоступен — возвращаем None, пост не будет опубликован
     return None
+
+
+def validate_post(text):
+    """
+    Валидирует пост перед публикацией.
+    Возвращает очищенный текст или None если пост не подходит.
+    """
+    if not text:
+        return None
+
+    # Удаляем случайные URL
+    text = re.sub(r'https?://\S+', '', text)
+
+    # Удаляем HTML-теги которые Claude не должен был писать
+    # (кроме тех что мы сами добавляем: <b>, <a>)
+    text = re.sub(r'<(?!/?b>|a |/a>)[^>]+>', '', text)
+
+    # Убираем строки с сайтами/источниками которые Claude мог добавить
+    bad_patterns = [
+        r'(?i)(manba|источник|source)\s*[:：].*',
+        r'(?i)www\.\S+',
+        r'(?i)\.(com|uz|ru|net|org|io)\b[^\n]*',
+    ]
+    for pattern in bad_patterns:
+        text = re.sub(pattern, '', text)
+
+    # Убираем лишние пустые строки (больше 2 подряд)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+    # Минимальная длина
+    if len(text) < 80:
+        return None
+
+    return text
 
 
 # ============================================
