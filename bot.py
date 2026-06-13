@@ -1062,7 +1062,7 @@ async def post_news(context: ContextTypes.DEFAULT_TYPE):
             continue
         try:
             await context.bot.send_message(
-                chat_id=CHANNEL_ID,
+                chat_id=COMMUNITY_CHAT_ID,
                 text=text,
                 parse_mode='Markdown',
                 disable_web_page_preview=True,
@@ -1074,7 +1074,7 @@ async def post_news(context: ContextTypes.DEFAULT_TYPE):
             print(f"⚠️ Failed to post news: {e}")
             # Try without Markdown in case of parse error
             try:
-                await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+                await context.bot.send_message(chat_id=COMMUNITY_CHAT_ID, text=text)
                 _mark_news_posted(article['url'], article['title'])
                 return
             except TelegramError:
@@ -1084,7 +1084,7 @@ async def post_news(context: ContextTypes.DEFAULT_TYPE):
     days = days_until_first_match()
     if days < 0:
         return
-    channel_handle = CHANNEL_ID.lstrip('@')
+    channel_handle = CHANNEL_ID.lstrip('@') if CHANNEL_ID else 'uzbekworld'
     text = (
         f"{get_text('uz', 'countdown_post', days=days, channel=channel_handle)}\n\n"
         f"────────\n\n"
@@ -1093,7 +1093,7 @@ async def post_news(context: ContextTypes.DEFAULT_TYPE):
         f"{get_text('en', 'countdown_post', days=days, channel=channel_handle)}"
     )
     try:
-        await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+        await context.bot.send_message(chat_id=COMMUNITY_CHAT_ID, text=text)
         print(f"📢 No new news — countdown posted: {days} days left")
     except TelegramError as e:
         print(f"⚠️ Countdown post failed: {e}")
@@ -1105,7 +1105,7 @@ async def post_news(context: ContextTypes.DEFAULT_TYPE):
 def main():
     """Главная функция"""
     print("🚀 Bot ishga tushmoqda...")
-    print(f"📢 Kanal: {CHANNEL_ID}")
+    print(f"� Komunita chati: {COMMUNITY_CHAT_ID}")
     print(f"👥 Adminlar: {len(ADMIN_USER_IDS)}")
     print(f"🌐 Tillar: O'zbekcha, Русский, English")
     if ANTHROPIC_API_KEY:
