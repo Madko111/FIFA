@@ -72,7 +72,12 @@ MANDATORY_KEYWORDS = [
 
 # Стоп-слова — статьи с ними однозначно не про нашу тему
 STOP_KEYWORDS = [
-    "betting guide", "how to bet", "odds", "bookmaker", "zizobet",
+    # Азартные игры — АБСОЛЮТНЫЙ ЗАПРЕТ
+    "betting guide", "how to bet", "bookmaker", "1xbet", "melbet",
+    "parimatch", "betway", "bet365", "mostbet", "betwinner", "casino",
+    "gambling", "odds", "promo code", "букмекер", "ставк", "казино",
+    "промокод", "zizobet", "leonbet", "fonbet", "winline",
+    # Нерелевантные темы
     "sneakers", "shoes", "bape", "fashion", "trump", "politics",
     "socceroos", "australia vs", "canada vs bosnia", "nigeria",
     "iran vs new zealand", "brown line", "chicago reader",

@@ -21,6 +21,23 @@ HEADERS = {
     "Accept-Language": "ru,en;q=0.9",
 }
 
+# ============================================================
+# ЗАПРЕТ БУКМЕКЕРОВ И АЗАРТНЫХ ИГР — ФУНДАМЕНТАЛЬНЫЙ УРОВЕНЬ
+# Любой пост содержащий эти слова — немедленно отклоняется.
+# ============================================================
+GAMBLING_STOP_WORDS = [
+    "1xbet", "1хбет", "1x bet", "melbet", "мелбет", "parimatch", "париматч",
+    "betway", "bet365", "mostbet", "мостбет", "betwinner", "leon bet", "leonbet",
+    "olimpbet", "olimp bet", "xbet", "winline", "фонбет", "fonbet",
+    "букмекер", "bukmaker", "stavka", "stavki", "ставка", "ставки",
+    "koeffitsient", "koef", "коэффициент", "odds", "promo kod", "promo code",
+    "промокод", "депозит", "вывод средств", "bonus", "бонус", "freebet",
+    "kazino", "казино", "casino", "ruletka", "рулетка", "slot", "слот",
+    "pari", "пари", "totalizator", "тотализатор", "bet ", " bet",
+    "stavochnik", "ставочник", "капер", "kaper", "прогноз за деньги",
+    "vip прогноз", "vip prog", "платный прогноз",
+]
+
 
 def fetch_channel_posts(channel_name, limit=10):
     """Парсит публичный Telegram-канал через t.me/s/"""
@@ -42,14 +59,26 @@ def fetch_channel_posts(channel_name, limit=10):
             if len(text) < 50:
                 continue
 
-            # Фото
+            # ЗАПРЕТ БУКМЕКЕРОВ — фундаментальный уровень
+            text_lower = text.lower()
+            is_gambling = any(word in text_lower for word in GAMBLING_STOP_WORDS)
+            if is_gambling:
+                print(f"  🚫 Пост отклонён (букмекер/азарт): {text[:60]}...")
+                continue
+
+            # Фото — ищем background-image с cdn (не emoji)
             photo_url = None
-            photo_el = msg.find("a", class_="tgme_widget_message_photo_wrap")
-            if photo_el:
-                style = photo_el.get("style", "")
-                match = re.search(r"url\('?([^')]+)'?\)", style)
-                if match:
-                    photo_url = match.group(1)
+            for el in msg.find_all(style=True):
+                style = el.get("style", "")
+                # Только реальные фото с CDN, не emoji
+                if "cdn" in style and "background-image" in style and "width:" in style:
+                    match = re.search(r"background-image:url\('([^']+)'\)", style)
+                    if match:
+                        url = match.group(1)
+                        # Берём только первое (главное) фото
+                        if url.startswith("https://cdn"):
+                            photo_url = url
+                            break
 
             # Дата
             date_el = msg.find("time")
