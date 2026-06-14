@@ -1015,9 +1015,9 @@ async def _format_news_post(article: dict) -> str | None:
         f"4. End with exactly these two lines (no changes):\n"
         f"   👉 {channel}\n"
         f"   #UzbekWorldCup #JCH2026\n\n"
-        f"STYLE: Like a sharp sports news post. Short sentences. Telegram Markdown (**bold**, _italic_).\n"
+        f"STYLE: Sharp sports journalism. Short factual sentences. No fluff. Use emojis naturally.\n"
         f"LANGUAGE: Uzbek only. No Russian. No English. No source URL.\n"
-        f"OUTPUT: Only the post text. Nothing else."
+        f"OUTPUT: Only the post text. Nothing else. Plain text, no markdown symbols."
     )
     try:
         # Try Gemini first (Claude has no credits)
@@ -1066,7 +1066,6 @@ async def post_news(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=COMMUNITY_CHAT_ID,
                 text=text,
-                parse_mode='Markdown',
                 disable_web_page_preview=True,
             )
             _mark_news_posted(article['url'], article['title'])
