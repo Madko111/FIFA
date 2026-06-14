@@ -120,7 +120,7 @@ def fetch_newsapi(query_info, page_size=5):
         "language": "en",
         "sortBy": "publishedAt",
         "pageSize": page_size,
-        "from": (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d"),
+        "from": (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),
     }
     try:
         resp = requests.get(url, params=params, timeout=10)
@@ -171,6 +171,16 @@ def is_relevant_article(article):
     content_len = len(article.get("content") or article.get("description") or "")
     if content_len < 80:
         return False, "слишком мало текста"
+
+    # 4. Reject articles whose TITLE is purely about "Uzbekistan qualified" (old news)
+    title_lower = article.get("title", "").lower()
+    stale_title_signals = [
+        "historic rise", "first time", "qualify", "qualified", "qualification",
+        "makes history", "first world cup", "debut", "curiosit",
+    ]
+    uzbek_stale = any(s in title_lower for s in stale_title_signals)
+    if uzbek_stale and "uzbekistan" in title_lower:
+        return False, f"stale qualification headline: '{article['title'][:60]}'"
 
     return True, "OK"
 
@@ -305,7 +315,12 @@ QOIDALAR:
 - Faqat haqiqiy faktlar
 - Oddiy, tushinarli til — sport xabari sifatida
 
-TAQIQLANGAN IBORALAR: "tarixiy lahza", "afsonaviy", "dunyoning eng muhim", "barcha ko'zlar"
+TAQIQLANGAN IBORALAR: "tarixiy lahza", "afsonaviy", "dunyoning eng muhim", "barcha ko'zlar",
+"birinchi marta Jahon Kubogiga", "uzoq kutilgan", "yangi sahifa ochdi", "yangi davr"
+
+MUHIM KONTEKST: Bugun 15-iyun 2026. O'zbekiston ALLAQACHON Jahon Kubogiga chiqqan (bu eski yangilik).
+Birinchi o'yin — 17-iyun, Portugaliya bilan. Faqat BUGUNGI yoki ERTANGI yangiliklar haqida yoz.
+Qvalifikatsiya haqida yozma — bu o'tgan yilgi gap.
 
 YANGILIK MATNI:
 {source_text}
@@ -569,11 +584,15 @@ def is_duplicate(new_content, limit=50):
     for post in recent:
         if post.get("hash") == new_hash:
             return True, "exact_duplicate"
-        if similarity_score(new_content, post.get("content", "")) > 0.42:
+        if similarity_score(new_content, post.get("content", "")) > 0.28:
             return True, "semantic_duplicate"
 
     spam = ["biz tayyormiz", "biz ishonamiz", "oldinga o'zbekiston",
-            "мы верим", "мы готовы", "вперёд узбекистан"]
+            "мы верим", "мы готовы", "вперёд узбекистан",
+            "birinchi marta jahon kubogiga", "birinchi marta chiqdi",
+            "uzoq kutilgan orzu", "yangi sahifa ochdi", "yangi davr boshlandi",
+            "uzoq kutilgan", "yangi bosqich", "tarixiy yutuq",
+            "birinchi marta kvalifikatsiya", "впервые вышел", "исторический выход"]
     if any(p in new_content.lower() for p in spam):
         cutoff = datetime.now() - timedelta(hours=24)
         for post in recent:
