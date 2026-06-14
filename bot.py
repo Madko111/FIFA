@@ -27,7 +27,8 @@ load_dotenv(override=True)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 # Чат сообщества для подсчёта реальных участников (по умолчанию — канал)
-COMMUNITY_CHAT_ID = os.getenv('COMMUNITY_CHAT_ID', CHANNEL_ID)
+# TEMPORARY DEBUG: post to test channel
+COMMUNITY_CHAT_ID = os.getenv('COMMUNITY_CHAT_ID', '@uzbekworld_test')
 ADMIN_USER_IDS = [int(uid.strip()) for uid in os.getenv('ADMIN_USER_ID', '').split(',') if uid.strip()]
 POST_INTERVAL_MINUTES = int(os.getenv('POST_INTERVAL_MINUTES', '30'))
 
