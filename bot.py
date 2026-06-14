@@ -1021,18 +1021,7 @@ async def _format_news_post(article: dict) -> str | None:
         f"OUTPUT: Only the post text. Nothing else."
     )
     try:
-        if ANTHROPIC_API_KEY:
-            client = _get_anthropic_client()
-            if client:
-                def _call():
-                    return client.messages.create(
-                        model=CLAUDE_MODEL,
-                        max_tokens=800,
-                        messages=[{"role": "user", "content": prompt}],
-                    )
-                resp = await asyncio.to_thread(_call)
-                parts = [b.text for b in resp.content if getattr(b, 'type', None) == 'text']
-                return "".join(parts).strip() or None
+        # Try Gemini first (Claude has no credits)
         if GEMINI_API_KEY:
             client = _get_gemini_client()
             if client:
@@ -1045,6 +1034,19 @@ async def _format_news_post(article: dict) -> str | None:
                     )
                 resp = await asyncio.to_thread(_gcall)
                 return (getattr(resp, 'text', None) or '').strip() or None
+        # Fallback to Claude if Gemini fails
+        if ANTHROPIC_API_KEY:
+            client = _get_anthropic_client()
+            if client:
+                def _call():
+                    return client.messages.create(
+                        model=CLAUDE_MODEL,
+                        max_tokens=800,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                resp = await asyncio.to_thread(_call)
+                parts = [b.text for b in resp.content if getattr(b, 'type', None) == 'text']
+                return "".join(parts).strip() or None
     except Exception as e:
         print(f"⚠️ AI news format error: {e}")
     return None
