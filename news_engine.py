@@ -19,7 +19,9 @@ from datetime import datetime, timedelta
 # ============================================
 
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "543701ebe5ea4056980521c43527cbb3")
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 
 # ============================================
@@ -40,6 +42,30 @@ def fetch_tg_channel_posts():
     except Exception as e:
         print(f"TG channel fetch error: {e}")
         return []
+
+
+# ============================================
+# GEMINI FALLBACK
+# ============================================
+
+def _rewrite_with_gemini(prompt):
+    """Fallback rewriter using Gemini when Claude is unavailable."""
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        from google import genai as google_genai
+        from google.genai import types
+        client = google_genai.Client(api_key=GEMINI_API_KEY)
+        resp = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(max_output_tokens=700, temperature=0.5),
+        )
+        text = getattr(resp, "text", None) or ""
+        return text.strip() or None
+    except Exception as e:
+        print(f"Gemini fallback error: {e}")
+        return None
 
 
 # ============================================
@@ -336,10 +362,11 @@ Faqat tayyor post matni. Izoh yozma."""
         if resp.status_code == 200:
             return resp.json()["content"][0]["text"].strip()
         print(f"Claude error {resp.status_code}: {resp.text[:150]}")
-        return None
+        # Fallback to Gemini
+        return _rewrite_with_gemini(prompt)
     except Exception as e:
-        print(f"Claude request error: {e}")
-        return None
+        print(f"Claude request error: {e} — trying Gemini fallback")
+        return _rewrite_with_gemini(prompt)
 
 
 def extract_image_url(article):

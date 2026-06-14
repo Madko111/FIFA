@@ -1052,52 +1052,64 @@ async def _format_news_post(article: dict) -> str | None:
 
 
 async def post_news(context: ContextTypes.DEFAULT_TYPE):
-    """Fetch latest WC2026/Uzbekistan news and post to channel. Falls back to countdown if no new articles."""
-    # Try to find a fresh unposted article
-    articles = await asyncio.to_thread(_fetch_news_articles)
-    for article in articles:
-        if not article.get('url') or _is_news_posted(article['url']):
-            continue
-        # Format with AI
-        text = await _format_news_post(article)
-        if not text:
-            continue
-        try:
-            await context.bot.send_message(
-                chat_id=COMMUNITY_CHAT_ID,
-                text=text,
-                disable_web_page_preview=True,
-            )
-            _mark_news_posted(article['url'], article['title'])
-            print(f"📰 News posted: {article['title'][:60]}")
-            return
-        except TelegramError as e:
-            print(f"⚠️ Failed to post news: {e}")
-            # Try without Markdown in case of parse error
-            try:
-                await context.bot.send_message(chat_id=COMMUNITY_CHAT_ID, text=text)
-                _mark_news_posted(article['url'], article['title'])
-                return
-            except TelegramError:
-                continue
+    """Fetch latest WC2026/Uzbekistan news via news_engine and post to community chat."""
+    from news_engine import fetch_all_news, format_news_post, is_duplicate, mark_published
 
-    # No new articles — fall back to countdown
-    days = days_until_first_match()
-    if days < 0:
-        return
-    channel_handle = CHANNEL_ID.lstrip('@') if CHANNEL_ID else 'uzbekworld'
-    text = (
-        f"{get_text('uz', 'countdown_post', days=days, channel=channel_handle)}\n\n"
-        f"────────\n\n"
-        f"{get_text('ru', 'countdown_post', days=days, channel=channel_handle)}\n\n"
-        f"────────\n\n"
-        f"{get_text('en', 'countdown_post', days=days, channel=channel_handle)}"
-    )
-    try:
-        await context.bot.send_message(chat_id=COMMUNITY_CHAT_ID, text=text)
-        print(f"📢 No new news — countdown posted: {days} days left")
-    except TelegramError as e:
-        print(f"⚠️ Countdown post failed: {e}")
+    print(f"[{datetime.now():%H:%M:%S}] 🔍 Yangiliklar qidirilmoqda...")
+    articles = await asyncio.to_thread(fetch_all_news)
+    print(f"  {len(articles)} ta maqola topildi")
+
+    for article in articles:
+        def _do_format(a=article):
+            return format_news_post(a, lang="uz")
+
+        result = await asyncio.to_thread(_do_format)
+        if not result:
+            print(f"  ⏭ Skipped: {article.get('title', '')[:50]}")
+            continue
+
+        post_text = result["text"]
+        image_url = result.get("image")
+
+        dup, reason = is_duplicate(post_text)
+        if dup:
+            print(f"  ⛔ Duplicate ({reason}): {article.get('title', '')[:60]}")
+            continue
+
+        try:
+            if image_url:
+                try:
+                    await context.bot.send_photo(
+                        chat_id=COMMUNITY_CHAT_ID,
+                        photo=image_url,
+                        caption=post_text,
+                        parse_mode="HTML",
+                    )
+                    print(f"  ✅ Posted with photo: {article.get('title', '')[:55]}")
+                except TelegramError:
+                    await context.bot.send_message(
+                        chat_id=COMMUNITY_CHAT_ID,
+                        text=post_text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                    print(f"  ✅ Posted (text): {article.get('title', '')[:55]}")
+            else:
+                await context.bot.send_message(
+                    chat_id=COMMUNITY_CHAT_ID,
+                    text=post_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                print(f"  ✅ Posted: {article.get('title', '')[:55]}")
+
+            mark_published(post_text, source_url=article.get("url", ""))
+            return
+
+        except TelegramError as e:
+            print(f"  ❌ Post failed: {e}")
+
+    print("  ℹ️ Yangilik topilmadi — o'tkazib yuborildi")
 
 # ============================================
 # ЗАПУСК
