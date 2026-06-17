@@ -340,34 +340,95 @@ def _get_anthropic_client():
             return None
     return _anthropic_client
 
-def _build_ai_facts():
-    """Собирает актуальные факты о клубе из данных бота для системного промпта."""
+def _fetch_wc2026_live_data() -> str:
+    """Fetch live Group K standings + recent Uzbekistan match scores from ESPN."""
+    import requests as _req
     lines = []
-    lines.append("MATCHES (Uzbekistan, World Cup 2026, Group K):")
+    try:
+        # Live scores for all 3 Uzbekistan matches
+        for m in MATCHES:
+            score = _fetch_score_espn(m['espn_date'], m['opponent']['en'])
+            opp = m['opponent']['en']
+            if score:
+                lines.append(f"- UZB vs {opp}: {score}")
+            else:
+                lines.append(f"- UZB vs {opp}: not played yet / {m['uzt_date']} {m['uzt_time']} UZT")
+    except Exception as e:
+        lines.append(f"(score fetch error: {e})")
+
+    # Group K standings
+    try:
+        url = "https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"
+        resp = _req.get(url, timeout=6)
+        if resp.status_code == 200:
+            for grp in resp.json().get('children', []):
+                if grp.get('name', '').upper() in ('GROUP K', 'K'):
+                    lines.append("\nGroup K standings:")
+                    for entry in grp.get('standings', {}).get('entries', []):
+                        team = entry.get('team', {}).get('displayName', '')
+                        stats = {s['name']: s['value'] for s in entry.get('stats', [])}
+                        w = int(stats.get('wins', 0))
+                        d = int(stats.get('ties', 0))
+                        l = int(stats.get('losses', 0))
+                        pts = int(stats.get('points', 0))
+                        gf = int(stats.get('pointsFor', 0))
+                        ga = int(stats.get('pointsAgainst', 0))
+                        lines.append(f"  {team}: {w}W {d}D {l}L | GF:{gf} GA:{ga} | {pts}pts")
+    except Exception as e:
+        lines.append(f"(standings fetch error: {e})")
+
+    return "\n".join(lines) if lines else "Live data unavailable."
+
+
+def _build_ai_facts():
+    """Builds full fact sheet for the AI system prompt."""
+    lines = []
+
+    # --- SQUAD ---
+    lines.append("=== UZBEKISTAN SQUAD (World Cup 2026, 26 players) ===")
+    lines.append("Head coach: Fabio Cannavaro")
+    lines.append("Captain: Eldor Shomurodov (#14, Forward, İstanbul Başakşehir)")
+    lines.append("")
+    pos_order = {"Goalkeeper": [], "Defender": [], "Midfielder": [], "Forward": []}
+    for p in PLAYERS:
+        pos = p['position']['en']
+        name = p['name']['en']
+        pos_order.get(pos, pos_order.setdefault(pos, [])).append(
+            f"#{p['number']} {name} ({p['club']}, age {p['age']})"
+        )
+    for pos, players in pos_order.items():
+        if players:
+            lines.append(f"{pos}s: {', '.join(players)}")
+    lines.append("")
+
+    # --- MATCHES & LIVE DATA ---
+    lines.append("=== MATCHES (Group K, all times UZT / Tashkent GMT+5) ===")
     for m in MATCHES:
         lines.append(
-            f"- {m['uzt_date']} {m['uzt_time']} (UZT) vs {m['opponent']['en']} "
-            f"in {m['city']['en']} ({m['stadium']})"
+            f"- {m['uzt_date']} {m['uzt_time']} UZT: UZB vs {m['opponent']['en']} "
+            f"at {m['stadium']}, {m['city']['en']}"
         )
     lines.append("")
-    lines.append("PROGRAMS people can join (registration on the website):")
+    lines.append("=== LIVE SCORES & STANDINGS ===")
+    lines.append(_fetch_wc2026_live_data())
+    lines.append("")
+
+    # --- PROGRAMS ---
+    lines.append("=== PROGRAMS (join via website) ===")
     prog_names = {
         "founders": "Founders Davra (business leaders network)",
-        "stadium": "Stadium Davra (organized stadium fan sections)",
-        "captain": "City Captain (lead the fan community in a city)",
-        "volunteer": "Volunteer program",
+        "stadium":  "Stadium Davra (organized stadium fan sections)",
+        "captain":  "City Captain (lead the fan community in a city)",
+        "volunteer":"Volunteer program (Uzbek: Volontyorlik | RU: Волонтёрство)",
         "passport": "Fan Passport",
     }
     for key in PROGRAMS:
         lines.append(f"- {prog_names.get(key, key)}")
     lines.append("")
-    lines.append(f"Squad: full official 26-man Uzbekistan World Cup 2026 roster, captain Eldor Shomurodov (#14), head coach Fabio Cannavaro.")
-    lines.append(f"Goal: build the largest organized Uzbek fan community for the World Cup 2026 — Uzbekistan's first-ever World Cup.")
     lines.append(f"Website: {WEBSITE_URL}")
+    lines.append("Goal: largest organized Uzbek fan community for WC2026 — Uzbekistan's first-ever World Cup.")
     lines.append("")
-    lines.append("LOCALIZED PROGRAM NAMES (use exactly these when answering — never invent translations):")
-    lines.append("- Volunteer program → Uzbek: 'Volontyorlik' | Russian: 'Волонтёрство' | English: 'Volunteer program'")
-    lines.append("- Founders Davra, Stadium Davra, City Captain, Fan Passport → keep the original names in all languages")
+    lines.append("LOCALIZED PROGRAM NAMES: Founders Davra, Stadium Davra, City Captain, Fan Passport — keep original names in all languages.")
     return "\n".join(lines)
 
 LANG_NAMES = {"uz": "Uzbek", "ru": "Russian", "en": "English"}
