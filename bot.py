@@ -340,6 +340,49 @@ def _get_anthropic_client():
             return None
     return _anthropic_client
 
+def _detect_question_lang(question: str) -> str | None:
+    """Detect language of the question: 'ru', 'uz', 'en' or None."""
+    q = question.lower()
+    # Cyrillic = Russian
+    cyrillic = sum(1 for c in q if '\u0400' <= c <= '\u04ff')
+    # Uzbek Latin signals
+    uz_signals = ['o\'zbek', 'o\'yin', 'qancha', 'qachon', 'haqida', 'jamoasi',
+                  'nechta', 'tarkibi', 'o\'yinchi', 'futbolchi', 'qo\'ychi']
+    if any(s in q for s in uz_signals):
+        return 'uz'
+    if cyrillic > 3:
+        return 'ru'
+    # Default: use profile lang (None = caller decides)
+    return None
+
+
+def _fetch_wc2026_all_teams() -> str:
+    """Fetch all WC2026 group standings and teams from ESPN."""
+    import requests as _req
+    lines = []
+    try:
+        url = "https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"
+        resp = _req.get(url, timeout=8)
+        if resp.status_code != 200:
+            return "(WC2026 standings unavailable)"
+        for grp in resp.json().get('children', []):
+            grp_name = grp.get('name', '')
+            lines.append(f"Group {grp_name}:")
+            for entry in grp.get('standings', {}).get('entries', []):
+                team = entry.get('team', {}).get('displayName', '')
+                stats = {s['name']: s.get('value', 0) for s in entry.get('stats', [])}
+                w = int(stats.get('wins', 0))
+                d = int(stats.get('ties', 0))
+                l = int(stats.get('losses', 0))
+                pts = int(stats.get('points', 0))
+                gf = int(stats.get('pointsFor', 0))
+                ga = int(stats.get('pointsAgainst', 0))
+                lines.append(f"  {team}: {w}W {d}D {l}L GF:{gf} GA:{ga} Pts:{pts}")
+        return "\n".join(lines) if lines else "(no standings data)"
+    except Exception as e:
+        return f"(standings fetch error: {e})"
+
+
 def _fetch_wc2026_live_data() -> str:
     """Fetch live Group K standings + recent Uzbekistan match scores from ESPN."""
     import requests as _req
@@ -413,6 +456,13 @@ def _build_ai_facts():
     lines.append(_fetch_wc2026_live_data())
     lines.append("")
 
+    # --- ALL WC2026 TEAMS ---
+    lines.append("=== ALL WC2026 GROUP STANDINGS (all 48 teams) ===")
+    lines.append(_fetch_wc2026_all_teams())
+    lines.append("")
+    lines.append("NOTE: For any team's full squad/roster, use your general World Cup 2026 knowledge — rosters were announced before the tournament.")
+    lines.append("")
+
     # --- PROGRAMS ---
     lines.append("=== PROGRAMS (join via website) ===")
     prog_names = {
@@ -433,8 +483,12 @@ def _build_ai_facts():
 
 LANG_NAMES = {"uz": "Uzbek", "ru": "Russian", "en": "English"}
 
-def _build_ai_system_prompt(lang, is_admin=False):
+def _build_ai_system_prompt(lang, is_admin=False, question: str = ""):
     """Системный промпт: тема, тон, язык, отказ от офтопа."""
+    # Override lang with detected language from the question itself
+    detected = _detect_question_lang(question)
+    if detected:
+        lang = detected
     lang_name = LANG_NAMES.get(lang, "English")
     facts = _build_ai_facts()
     admin_note = ""
@@ -535,7 +589,7 @@ async def ask_ai(question, lang, is_admin=False):
 
     Возвращает текст или None при ошибке.
     """
-    system_prompt = _build_ai_system_prompt(lang, is_admin)
+    system_prompt = _build_ai_system_prompt(lang, is_admin, question=question)
     # Приоритет — Claude
     if ANTHROPIC_API_KEY:
         answer = await _ask_claude(question, system_prompt)
