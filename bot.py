@@ -611,6 +611,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик кнопок"""
     query = update.callback_query
+    print(f"🔘 Button pressed: {query.data} by user {query.from_user.id}")
     await query.answer()
     
     try:
