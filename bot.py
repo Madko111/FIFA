@@ -778,23 +778,44 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await _answer_with_ai(update.message, question, lang, is_admin)
 
+def _md_to_html(text: str) -> str:
+    """Convert AI markdown output to Telegram HTML."""
+    import re
+    # Remove markdown headings (# ## ###) -> plain bold line
+    text = re.sub(r'^#{1,6}\s+(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+    # Bold **text** or __text__
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)
+    # Italic *text* or _text_ (but not inside words)
+    text = re.sub(r'(?<!\w)\*(.+?)\*(?!\w)', r'<i>\1</i>', text)
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'<i>\1</i>', text)
+    # Inline code `text`
+    text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
+    # Markdown links [text](url) -> HTML
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    return text.strip()
+
+
 async def _answer_with_ai(message, question, lang, is_admin):
     """Общий обработчик: показывает 'думаю', спрашивает AI, шлёт ответ или отказ."""
     if not AI_ENABLED:
         await message.reply_text(get_text(lang, 'ask_ai_error'))
         return
 
-    thinking = await message.reply_text(get_text(lang, 'ask_ai_thinking'))
+    # Use detected language from question for the thinking message too
+    detected = _detect_question_lang(question)
+    reply_lang = detected or lang
+
+    thinking = await message.reply_text(get_text(reply_lang, 'ask_ai_thinking'))
     answer = await ask_ai(question, lang, is_admin)
-    final = answer or get_text(lang, 'ask_ai_error')
-    # Сначала пробуем Markdown (ради ссылок [текст](url)). При ошибке парсинга — без форматирования.
+    final = _md_to_html(answer) if answer else get_text(reply_lang, 'ask_ai_error')
     try:
-        await thinking.edit_text(final, parse_mode='Markdown', disable_web_page_preview=True)
+        await thinking.edit_text(final, parse_mode='HTML', disable_web_page_preview=True)
     except BadRequest:
         try:
-            await thinking.edit_text(final)
+            await thinking.edit_text(answer or get_text(reply_lang, 'ask_ai_error'))
         except BadRequest:
-            await message.reply_text(final)
+            await message.reply_text(answer or get_text(reply_lang, 'ask_ai_error'))
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Свободный текст: AI-чат.
