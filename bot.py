@@ -43,11 +43,79 @@ USER_SETTINGS_FILE = "user_settings.json"
 # ДАННЫЕ
 # ============================================
 
+# All times in UZT (Tashkent, GMT+5). uzt_date is the date in Uzbekistan.
 MATCHES = [
-    {"date": "2026-06-17", "opponent": {"uz": "Portugaliya", "ru": "Португалия", "en": "Portugal"}, "flag": "🇵🇹", "time": "21:00", "tz": "CDT", "uzt": "02:00 (18-iyun)", "city": {"uz": "Hyuston", "ru": "Хьюстон", "en": "Houston"}, "stadium": "NRG Stadium"},
-    {"date": "2026-06-21", "opponent": {"uz": "Kolumbiya", "ru": "Колумбия", "en": "Colombia"}, "flag": "🇨🇴", "time": "18:00", "tz": "EDT", "uzt": "03:00 (22-iyun)", "city": {"uz": "Atlanta", "ru": "Атланта", "en": "Atlanta"}, "stadium": "Mercedes-Benz Stadium"},
-    {"date": "2026-06-25", "opponent": {"uz": "Kongo (DR)", "ru": "Конго (ДР)", "en": "Congo DR"}, "flag": "🇨🇩", "time": "15:00", "tz": "CDT", "uzt": "02:00 (26-iyun)", "city": {"uz": "Mexico-siti", "ru": "Мехико", "en": "Mexico City"}, "stadium": "Estadio Azteca"},
+    {
+        "uzt_date": "2026-06-18", "uzt_time": "07:00",
+        "opponent": {"uz": "Kolumbiya", "ru": "Колумбия", "en": "Colombia"},
+        "flag": "🇨🇴",
+        "city": {"uz": "Mexico-siti", "ru": "Мехико", "en": "Mexico City"},
+        "stadium": "Estadio Azteca",
+        "score": None,
+    },
+    {
+        "uzt_date": "2026-06-23", "uzt_time": "22:00",
+        "opponent": {"uz": "Portugaliya", "ru": "Португалия", "en": "Portugal"},
+        "flag": "🇵🇹",
+        "city": {"uz": "Hyuston", "ru": "Хьюстон", "en": "Houston"},
+        "stadium": "NRG Stadium",
+        "score": None,
+    },
+    {
+        "uzt_date": "2026-06-28", "uzt_time": "04:30",
+        "opponent": {"uz": "Kongo (DR)", "ru": "Конго (ДР)", "en": "Congo DR"},
+        "flag": "🇨🇩",
+        "city": {"uz": "Atlanta", "ru": "Атланта", "en": "Atlanta"},
+        "stadium": "Mercedes-Benz Stadium",
+        "score": None,
+    },
 ]
+
+
+def build_schedule_text(lang: str) -> str:
+    """Build schedule text in the given language with live date calculations (UZT)."""
+    headers = {
+        "uz": "O'zbekiston vaqti (Toshkent, GMT+5):",
+        "ru": "По времени Узбекистана (Ташкент, GMT+5):",
+        "en": "Uzbekistan local time (Tashkent, GMT+5):",
+    }
+    titles = {
+        "uz": "📅 GURUH K — O'YIN JADVALI",
+        "ru": "📅 ГРУППА K — РАСПИСАНИЕ",
+        "en": "📅 MATCH SCHEDULE - GROUP K",
+    }
+    today_labels  = {"uz": "BUGUN! 🔥", "ru": "СЕГОДНЯ! 🔥", "en": "TODAY! 🔥"}
+    played_labels = {"uz": "O'ynaldi ✅",   "ru": "Сыгран ✅",          "en": "Played ✅"}
+    days_labels   = {"uz": "kun qoldi ⏰",   "ru": "дней осталось ⏰", "en": "days left ⏰"}
+    score_labels  = {"uz": "Natija",         "ru": "Счёт",              "en": "Score"}
+
+    # Current date in UZT
+    today_uzt = (datetime.utcnow() + timedelta(hours=5)).date()
+
+    text = f"{headers.get(lang, headers['en'])}\n{titles.get(lang, titles['en'])}\n\n"
+
+    for i, match in enumerate(MATCHES, 1):
+        match_date = datetime.strptime(match['uzt_date'], '%Y-%m-%d').date()
+        days_until = (match_date - today_uzt).days
+        opponent = match['opponent'].get(lang, match['opponent']['en'])
+        city = match['city'].get(lang, match['city']['en'])
+
+        text += f"{i}. 🇺🇿 vs {match['flag']} {opponent}\n"
+        text += f"📅 {match_date.strftime('%d.%m.%Y')} {match['uzt_time']}\n"
+        text += f"📍 {city}, {match['stadium']}\n"
+
+        if days_until > 0:
+            text += f"⏰ {days_until} {days_labels.get(lang, days_labels['en'])}\n"
+        elif days_until == 0:
+            text += f"{today_labels.get(lang, today_labels['en'])}\n"
+        else:
+            if match.get('score'):
+                text += f"{score_labels.get(lang, 'Score')}: {match['score']} ✅\n"
+            else:
+                text += f"{played_labels.get(lang, played_labels['en'])}\n"
+        text += "\n"
+
+    return text
 
 # Расширенный официальный состав сборной Узбекистана на ЧМ-2026
 # (26 игроков, объявлены 2 июня 2026; возраст указан на 03.06.2026)
@@ -502,28 +570,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     track_user_interaction(user_id)
     lang = get_user_language(user_id) or 'uz'
-    
-    schedule_text = get_text(lang, 'schedule_title') + "\n\n"
-    
-    today = datetime.now().date()
-    for i, match in enumerate(MATCHES, 1):
-        match_date = datetime.strptime(match['date'], '%Y-%m-%d')
-        days_until = (match_date.date() - today).days
-        tz = match.get('tz', '')
-        
-        schedule_text += f"{i}. 🇺🇿 {get_text(lang, 'vs')} {match['flag']} {match['opponent'][lang]}\n"
-        schedule_text += f"   🇳🇿 {match['uzt']} (O'zbekiston vaqti)\n"
-        schedule_text += f"   🗺️ {match_date.strftime('%d.%m.%Y')} {match['time']} {tz} (mahalliy)\n"
-        schedule_text += f"   📍 {match['city'][lang]}, {match['stadium']}\n"
-        
-        if days_until > 0:
-            schedule_text += f"   ⏰ {days_until} {get_text(lang, 'days_left')}\n\n"
-        elif days_until == 0:
-            schedule_text += f"   🔥 {get_text(lang, 'today')}\n\n"
-        else:
-            schedule_text += f"   ✅ {get_text(lang, 'played')}\n\n"
-    
-    await update.message.reply_text(schedule_text)
+    await update.message.reply_text(build_schedule_text(lang))
 
 async def matches_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Alias for /schedule"""
@@ -685,26 +732,8 @@ async def _handle_button(query):
     
     # Расписание
     elif query.data == "schedule":
-        schedule_text = get_text(lang, 'schedule_title') + "\n\n"
-        today = datetime.now().date()
-        for i, match in enumerate(MATCHES, 1):
-            match_date = datetime.strptime(match['date'], '%Y-%m-%d')
-            days_until = (match_date.date() - today).days
-            tz = match.get('tz', '')
-            
-            schedule_text += f"{i}. 🇺🇿 {get_text(lang, 'vs')} {match['flag']} {match['opponent'][lang]}\n"
-            schedule_text += f"🇳🇿 {match['uzt']} (O'zbekiston vaqti)\n"
-            schedule_text += f"🗺️ {match_date.strftime('%d.%m.%Y')} {match['time']} {tz} (mahalliy)\n"
-            schedule_text += f"📍 {match['city'][lang]}, {match['stadium']}\n"
-            if days_until > 0:
-                schedule_text += f"⏰ {days_until} {get_text(lang, 'days_left')}\n\n"
-            elif days_until == 0:
-                schedule_text += f"🔥 {get_text(lang, 'today')}\n\n"
-            else:
-                schedule_text += f"✅ {get_text(lang, 'played')}\n\n"
-        
         await query.edit_message_text(
-            schedule_text,
+            build_schedule_text(lang),
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'back'), callback_data="main_menu")]])
         )
     
