@@ -611,7 +611,6 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик кнопок"""
     query = update.callback_query
-    print(f"🔘 Button pressed: {query.data} by user {query.from_user.id}")
     await query.answer()
     
     try:
@@ -930,7 +929,7 @@ def main():
     print("✅ Bot ishga tushdi!\n")
     
     # Запуск
-    app.run_polling()
+    app.run_polling(allowed_updates=["message", "callback_query", "my_chat_member"])
 
 if __name__ == "__main__":
     main()
