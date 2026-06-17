@@ -522,6 +522,30 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(schedule_text)
 
+async def matches_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Alias for /schedule"""
+    await schedule_command(update, context)
+
+async def watchparty_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show watch party / cities menu"""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    await update.message.reply_text(
+        get_text(lang, 'watchparty_title'),
+        reply_markup=get_cities_menu(lang)
+    )
+
+async def players_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show players menu"""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    await update.message.reply_text(
+        get_text(lang, 'players_title'),
+        reply_markup=get_players_menu(lang)
+    )
+
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /ask <вопрос> — разовый AI-вопрос."""
     user_id = update.effective_user.id
@@ -918,6 +942,9 @@ def main():
     # Команды
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("schedule", schedule_command))
+    app.add_handler(CommandHandler("matches", matches_command))
+    app.add_handler(CommandHandler("watchparty", watchparty_command))
+    app.add_handler(CommandHandler("players", players_command))
     app.add_handler(CommandHandler("ask", ask_command))
     
     # Кнопки
