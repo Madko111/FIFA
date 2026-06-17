@@ -25,11 +25,7 @@ load_dotenv(override=True)
 # НАСТРОЙКИ
 # ============================================
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-CHANNEL_ID = os.getenv('CHANNEL_ID')
-# TEMPORARY DEBUG: force test channel regardless of env var
-COMMUNITY_CHAT_ID = '@uzbekworld_test'
 ADMIN_USER_IDS = [int(uid.strip()) for uid in os.getenv('ADMIN_USER_ID', '').split(',') if uid.strip()]
-POST_INTERVAL_MINUTES = int(os.getenv('POST_INTERVAL_MINUTES', '30'))
 
 # AI-чат (Gemini сейчас; Claude — позже, после одобрения менеджера)
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -817,33 +813,6 @@ async def _handle_button(query):
         )
 
 # ============================================
-# ПРИВЕТСТВИЕ НОВЫХ УЧАСТНИКОВ
-# ============================================
-
-async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Приветствует новых участников группы/канала на 3 языках."""
-    if not update.message or not update.message.new_chat_members:
-        return
-
-    bot_username = context.bot.username
-    for member in update.message.new_chat_members:
-        if member.is_bot:
-            continue
-        name = member.first_name or "friend"
-        # Многоязычное приветствие (uz / ru / en вместе)
-        text = (
-            f"{get_text('uz', 'new_member', name=name, bot_username=bot_username)}\n\n"
-            f"────────\n\n"
-            f"{get_text('ru', 'new_member', name=name, bot_username=bot_username)}\n\n"
-            f"────────\n\n"
-            f"{get_text('en', 'new_member', name=name, bot_username=bot_username)}"
-        )
-        try:
-            await update.message.reply_text(text)
-        except TelegramError as e:
-            print(f"⚠️ Не удалось отправить приветствие: {e}")
-
-# ============================================
 # АВТОПОСТИНГ (JobQueue)
 # ============================================
 
@@ -883,12 +852,8 @@ def today_priority(lang, days):
     return p['near']
 
 async def get_community_member_count(bot):
-    """Возвращает реальное число участников чата сообщества (или None)."""
-    try:
-        return await bot.get_chat_member_count(COMMUNITY_CHAT_ID)
-    except TelegramError as e:
-        print(f"⚠️ Не удалось получить число участников сообщества: {e}")
-        return None
+    """Возвращает число участников текущего чата (или None)."""
+    return None
 
 async def build_war_room(lang, bot=None):
     """Собирает War Room по стандарту graphify: live-данные + цели."""
@@ -931,7 +896,7 @@ async def build_war_room(lang, bot=None):
 def main():
     """Главная функция"""
     print("🚀 Bot ishga tushmoqda...")
-    print(f"� Komunita chati: {COMMUNITY_CHAT_ID}")
+    print(f"💬 Bot yoqildi")
     print(f"👥 Adminlar: {len(ADMIN_USER_IDS)}")
     print(f"🌐 Tillar: O'zbekcha, Русский, English")
     if ANTHROPIC_API_KEY:
@@ -953,9 +918,6 @@ def main():
     # Кнопки
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # Приветствие новых участников
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members))
-
     # AI-чат: свободный текст (не команды). Регистрируем последним.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     
