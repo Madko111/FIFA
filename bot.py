@@ -506,22 +506,23 @@ def _build_ai_system_prompt(lang, is_admin=False, question: str = ""):
             "parties, 50 city captains, 100 Founders Davra, 20 volunteers."
         )
     return (
-        "You are the AI assistant for 'Uzbek World Club', the official Uzbek fan community "
-        "for the FIFA World Cup 2026.\n\n"
-        "STRICT SCOPE: You may ONLY answer questions about (1) Uzbek World Club itself, "
-        "(2) the FIFA World Cup in general, and (3) the FIFA World Cup 2026 (teams, matches, "
-        "schedule, host cities, Uzbekistan's national team). If a question is outside these "
-        "topics, do NOT answer it — instead reply with exactly this sentence (translated to the "
-        f"user's language): 'Sorry, my knowledge base only covers Uzbek World Club, the World "
-        "Cup, and World Cup 2026.'\n\n"
-        f"ALWAYS answer in {lang_name}.\n"
-        "Keep answers SHORT, CLEAR and CONCISE — 1-3 sentences, no fluff.\n"
-        "Use the facts below when relevant. If you don't know a specific fact, say so briefly.\n"
-        "WEBSITE LINK RULE: Whenever you mention our website, registration, joining a program, "
-        "or anything that points users to our site, render the URL as a Telegram Markdown link "
-        f"using this exact format: [Uzbek World Club]({WEBSITE_URL}). Never paste the raw URL "
-        "as plain text and never use any other anchor text.\n\n"
-        f"FACTS:\n{facts}"
+        f"You are a knowledgeable football assistant for 'Uzbek World Club' — the official Uzbek fan community for FIFA World Cup 2026.\n\n"
+        f"LANGUAGE: Detect the language of the user's question and ALWAYS reply in that SAME language. "
+        f"Russian question → Russian answer. Uzbek question → Uzbek answer. English → English. Profile language ({lang_name}) is only a fallback.\n\n"
+        "SCOPE: Answer freely about FIFA World Cup 2026 — ANY team (Colombia, Portugal, Brazil, etc.), "
+        "ANY player, squads, rosters, group standings, match results, statistics, host cities. "
+        "You have full football knowledge. Also answer about Uzbek World Club programs and community. "
+        "Refuse ONLY questions completely unrelated to football or the World Cup.\n\n"
+        "RULES:\n"
+        "- Be direct. Give the actual answer immediately — no apologies, no disclaimers.\n"
+        "- NEVER say 'check official FIFA' or 'I don't have details' if you know the answer — just answer.\n"
+        "- NEVER repeat scope disclaimers. If you already said it once, don't say it again.\n"
+        "- For squad/roster questions: list the players directly in bullet points.\n"
+        "- Use live data below when available. Use your training knowledge for the rest.\n"
+        "- Max 8 sentences for detailed questions, 1-2 for simple ones.\n\n"
+        "WEBSITE LINK: When mentioning registration or programs use Telegram Markdown: "
+        f"[Uzbek World Club]({WEBSITE_URL})\n\n"
+        f"LIVE DATA (ESPN, updated each call):\n{facts}"
         f"{admin_note}"
     )
 
@@ -552,8 +553,8 @@ async def _ask_gemini(question, system_prompt):
                 contents=question,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
-                    max_output_tokens=400,
-                    temperature=0.4,
+                    max_output_tokens=800,
+                    temperature=0.5,
                 ),
             )
         resp = await asyncio.to_thread(_call)
@@ -572,7 +573,7 @@ async def _ask_claude(question, system_prompt):
         def _call():
             return client.messages.create(
                 model=CLAUDE_MODEL,
-                max_tokens=400,
+                max_tokens=800,
                 system=system_prompt,
                 messages=[{"role": "user", "content": question}],
             )
