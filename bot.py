@@ -346,7 +346,7 @@ def _build_ai_facts():
     lines.append("MATCHES (Uzbekistan, World Cup 2026, Group K):")
     for m in MATCHES:
         lines.append(
-            f"- {m['date']} {m['time']} vs {m['opponent']['en']} "
+            f"- {m['uzt_date']} {m['uzt_time']} (UZT) vs {m['opponent']['en']} "
             f"in {m['city']['en']} ({m['stadium']})"
         )
     lines.append("")
