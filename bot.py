@@ -615,9 +615,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         await _handle_button(query)
-    except BadRequest as e:
-        if "Message is not modified" not in str(e):
-            raise
+    except Exception as e:
+        err = str(e)
+        print(f"⚠️ button_callback error [{query.data}]: {err}")
+        if "Message is not modified" not in err:
+            try:
+                await query.edit_message_text(f"⚠️ Xatolik: {err[:200]}")
+            except Exception:
+                pass
 
 async def _handle_button(query):
     """Внутренний обработчик кнопок."""
