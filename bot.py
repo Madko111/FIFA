@@ -308,6 +308,22 @@ def track_user_interaction(user_id):
 # Пользователи, ожидающие ввода вопроса для AI (нажали "Ask AI" в меню)
 _AI_WAITING = set()
 
+# Per-user conversation history: {user_id: [{"role": "user"|"assistant", "content": str}, ...]}
+_USER_HISTORY: dict[int, list[dict]] = {}
+_HISTORY_MAX = 5  # keep last 5 exchanges (10 messages)
+
+
+def _get_history(user_id: int) -> list[dict]:
+    return _USER_HISTORY.get(user_id, [])
+
+
+def _add_to_history(user_id: int, role: str, content: str):
+    history = _USER_HISTORY.setdefault(user_id, [])
+    history.append({"role": role, "content": content})
+    # Keep only last _HISTORY_MAX exchanges (2 messages per exchange)
+    if len(history) > _HISTORY_MAX * 2:
+        _USER_HISTORY[user_id] = history[-(  _HISTORY_MAX * 2):]
+
 # Ленивая инициализация клиентов
 _gemini_client = None
 _anthropic_client = None
@@ -540,17 +556,25 @@ def _looks_on_topic(text):
     t = (text or "").lower()
     return any(k in t for k in AI_TOPIC_KEYWORDS)
 
-async def _ask_gemini(question, system_prompt):
-    """Запрос к Gemini. Возвращает текст или None."""
+async def _ask_gemini(question, system_prompt, history: list):
+    """Запрос к Gemini с историей диалога. Возвращает текст или None."""
     client = _get_gemini_client()
     if client is None:
         return None
     try:
         from google.genai import types
+        # Build contents from history + current question
+        contents = []
+        for msg in history:
+            contents.append(types.Content(
+                role="user" if msg["role"] == "user" else "model",
+                parts=[types.Part(text=msg["content"])]
+            ))
+        contents.append(types.Content(role="user", parts=[types.Part(text=question)]))
         def _call():
             return client.models.generate_content(
                 model=GEMINI_MODEL,
-                contents=question,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     max_output_tokens=800,
@@ -564,18 +588,19 @@ async def _ask_gemini(question, system_prompt):
         print(f"⚠️ Gemini xatosi: {e}")
         return None
 
-async def _ask_claude(question, system_prompt):
-    """Запрос к Claude. Возвращает текст или None."""
+async def _ask_claude(question, system_prompt, history: list):
+    """Запрос к Claude с историей диалога. Возвращает текст или None."""
     client = _get_anthropic_client()
     if client is None:
         return None
     try:
+        messages = list(history) + [{"role": "user", "content": question}]
         def _call():
             return client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=800,
                 system=system_prompt,
-                messages=[{"role": "user", "content": question}],
+                messages=messages,
             )
         resp = await asyncio.to_thread(_call)
         parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
@@ -585,20 +610,16 @@ async def _ask_claude(question, system_prompt):
         print(f"⚠️ Claude xatosi: {e}")
         return None
 
-async def ask_ai(question, lang, is_admin=False):
-    """Короткий тематический ответ. Сначала Claude, при отсутствии — Gemini.
-
-    Возвращает текст или None при ошибке.
-    """
+async def ask_ai(question, lang, is_admin=False, user_id: int = 0):
+    """Returns AI answer with per-user conversation context (last 5 exchanges)."""
     system_prompt = _build_ai_system_prompt(lang, is_admin, question=question)
-    # Приоритет — Claude
+    history = _get_history(user_id) if user_id else []
     if ANTHROPIC_API_KEY:
-        answer = await _ask_claude(question, system_prompt)
+        answer = await _ask_claude(question, system_prompt, history)
         if answer:
             return answer
-    # Запасной — Gemini
     if GEMINI_API_KEY:
-        return await _ask_gemini(question, system_prompt)
+        return await _ask_gemini(question, system_prompt, history)
     return None
 
 # ============================================
@@ -806,8 +827,14 @@ async def _answer_with_ai(message, question, lang, is_admin):
     detected = _detect_question_lang(question)
     reply_lang = detected or lang
 
+    # Infer user_id from message
+    uid = message.from_user.id if message.from_user else 0
     thinking = await message.reply_text(get_text(reply_lang, 'ask_ai_thinking'))
-    answer = await ask_ai(question, lang, is_admin)
+    answer = await ask_ai(question, lang, is_admin, user_id=uid)
+    if answer:
+        # Save exchange to history
+        _add_to_history(uid, "user", question)
+        _add_to_history(uid, "assistant", answer)
     final = _md_to_html(answer) if answer else get_text(reply_lang, 'ask_ai_error')
     try:
         await thinking.edit_text(final, parse_mode='HTML', disable_web_page_preview=True)
