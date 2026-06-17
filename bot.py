@@ -876,10 +876,10 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Решаем, отвечать ли
     if is_private:
-        should = waiting or True  # в личке любой текст считаем вопросом
+        should = True  # в личке любой текст считаем вопросом
     else:
-        # В группе — только если позвали бота или похоже на нашу тему
-        should = waiting or replied_to_bot or mentioned or _looks_on_topic(text)
+        # В группе — ТОЛЬКО если бота явно позвали (@mention, reply, /ask, или Ask AI кнопка)
+        should = waiting or replied_to_bot or mentioned
 
     if not should:
         return
