@@ -43,37 +43,90 @@ USER_SETTINGS_FILE = "user_settings.json"
 # ДАННЫЕ
 # ============================================
 
-# All times in UZT (Tashkent, GMT+5). uzt_date is the date in Uzbekistan.
+# All times in UZT (Tashkent, GMT+5).
+# espn_date: the local match date used to query ESPN API (YYYYMMDD).
 MATCHES = [
     {
         "uzt_date": "2026-06-18", "uzt_time": "07:00",
+        "espn_date": "20260617",
         "opponent": {"uz": "Kolumbiya", "ru": "Колумбия", "en": "Colombia"},
         "flag": "🇨🇴",
         "city": {"uz": "Mexico-siti", "ru": "Мехико", "en": "Mexico City"},
         "stadium": "Estadio Azteca",
-        "score": None,
     },
     {
         "uzt_date": "2026-06-23", "uzt_time": "22:00",
+        "espn_date": "20260623",
         "opponent": {"uz": "Portugaliya", "ru": "Португалия", "en": "Portugal"},
         "flag": "🇵🇹",
         "city": {"uz": "Hyuston", "ru": "Хьюстон", "en": "Houston"},
         "stadium": "NRG Stadium",
-        "score": None,
     },
     {
         "uzt_date": "2026-06-28", "uzt_time": "04:30",
+        "espn_date": "20260627",
         "opponent": {"uz": "Kongo (DR)", "ru": "Конго (ДР)", "en": "Congo DR"},
         "flag": "🇨🇩",
         "city": {"uz": "Atlanta", "ru": "Атланта", "en": "Atlanta"},
         "stadium": "Mercedes-Benz Stadium",
-        "score": None,
     },
 ]
 
 
+def _fetch_score_espn(espn_date: str, opponent_en: str) -> str | None:
+    """Fetch live/final score from ESPN API. Returns 'X:X' or None."""
+    import requests as _req
+    try:
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates={espn_date}"
+        resp = _req.get(url, timeout=6)
+        if resp.status_code != 200:
+            return None
+        for event in resp.json().get('events', []):
+            name = event.get('name', '').lower()
+            if 'uzbekistan' not in name:
+                continue
+            if opponent_en.split()[0].lower() not in name:  # e.g. 'colombia', 'portugal', 'congo'
+                continue
+            comp = (event.get('competitions') or [{}])[0]
+            status = comp.get('status', {}).get('type', {}).get('name', '')
+            if status not in ('STATUS_FINAL', 'STATUS_IN_PROGRESS'):
+                return None
+            uz_score = opp_score = None
+            for c in comp.get('competitors', []):
+                team = c.get('team', {}).get('displayName', '').lower()
+                s = c.get('score', '')
+                if 'uzbekistan' in team:
+                    uz_score = s
+                else:
+                    opp_score = s
+            if uz_score is not None and opp_score is not None:
+                suffix = ' 🔴 LIVE' if status == 'STATUS_IN_PROGRESS' else ''
+                return f"{uz_score}:{opp_score}{suffix}"
+    except Exception as e:
+        print(f"ESPN score error: {e}")
+    return None
+
+
+def _days_left_label(days: int, lang: str) -> str:
+    """Properly pluralized days-left string."""
+    if lang == 'en':
+        return f"{days} day left ⏰" if days == 1 else f"{days} days left ⏰"
+    if lang == 'ru':
+        if days % 100 in range(11, 20):
+            word = "дней"
+        elif days % 10 == 1:
+            word = "день"
+        elif days % 10 in (2, 3, 4):
+            word = "дня"
+        else:
+            word = "дней"
+        return f"{days} {word} ⏰"
+    # Uzbek — no plural change
+    return f"{days} kun qoldi ⏰"
+
+
 def build_schedule_text(lang: str) -> str:
-    """Build schedule text in the given language with live date calculations (UZT)."""
+    """Build schedule text — fetches live scores from ESPN."""
     headers = {
         "uz": "O'zbekiston vaqti (Toshkent, GMT+5):",
         "ru": "По времени Узбекистана (Ташкент, GMT+5):",
@@ -84,14 +137,11 @@ def build_schedule_text(lang: str) -> str:
         "ru": "📅 ГРУППА K — РАСПИСАНИЕ",
         "en": "📅 MATCH SCHEDULE - GROUP K",
     }
-    today_labels  = {"uz": "BUGUN! 🔥", "ru": "СЕГОДНЯ! 🔥", "en": "TODAY! 🔥"}
-    played_labels = {"uz": "O'ynaldi ✅",   "ru": "Сыгран ✅",          "en": "Played ✅"}
-    days_labels   = {"uz": "kun qoldi ⏰",   "ru": "дней осталось ⏰", "en": "days left ⏰"}
-    score_labels  = {"uz": "Natija",         "ru": "Счёт",              "en": "Score"}
+    today_labels  = {"uz": "BUGUN! 🔥",    "ru": "СЕГОДНЯ! 🔥", "en": "TODAY! 🔥"}
+    played_labels = {"uz": "O'ynaldi ✅",  "ru": "Сыгран ✅",     "en": "Played ✅"}
+    score_labels  = {"uz": "Natija",        "ru": "Счёт",           "en": "Score"}
 
-    # Current date in UZT
     today_uzt = (datetime.utcnow() + timedelta(hours=5)).date()
-
     text = f"{headers.get(lang, headers['en'])}\n{titles.get(lang, titles['en'])}\n\n"
 
     for i, match in enumerate(MATCHES, 1):
@@ -105,12 +155,14 @@ def build_schedule_text(lang: str) -> str:
         text += f"📍 {city}, {match['stadium']}\n"
 
         if days_until > 0:
-            text += f"⏰ {days_until} {days_labels.get(lang, days_labels['en'])}\n"
+            text += f"{_days_left_label(days_until, lang)}\n"
         elif days_until == 0:
             text += f"{today_labels.get(lang, today_labels['en'])}\n"
         else:
-            if match.get('score'):
-                text += f"{score_labels.get(lang, 'Score')}: {match['score']} ✅\n"
+            # Try live score from ESPN
+            score = _fetch_score_espn(match['espn_date'], match['opponent']['en'])
+            if score:
+                text += f"{score_labels.get(lang, 'Score')}: {score}\n"
             else:
                 text += f"{played_labels.get(lang, played_labels['en'])}\n"
         text += "\n"
