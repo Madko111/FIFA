@@ -164,23 +164,24 @@ def build_schedule_text(lang: str) -> str:
         text += f"📅 {match_date.strftime('%d.%m.%Y')} {match['uzt_time']}\n"
         text += f"📍 {city}, {match['stadium']}\n"
 
-        if days_until > 0:
+        # If score is already set, always show it regardless of date
+        if match.get('score'):
+            text += f"{score_labels.get(lang, 'Score')}: {match['score']} ✅\n"
+            scorers = match.get('scorers')
+            if scorers:
+                text += f"⚽ {scorers.get(lang, scorers.get('en', ''))}\n"
+        elif days_until > 0:
             text += f"{_days_left_label(days_until, lang)}\n"
         elif days_until == 0:
-            # Try live score first, fall back to today label
             live = _fetch_score_espn(match['espn_date'], match['opponent']['en'])
             if live:
                 text += f"{score_labels.get(lang, 'Score')}: {live}\n"
             else:
                 text += f"{today_labels.get(lang, today_labels['en'])}\n"
         else:
-            # Played — prefer hardcoded score, fall back to ESPN
-            score = match.get('score') or _fetch_score_espn(match['espn_date'], match['opponent']['en'])
-            if score:
-                text += f"{score_labels.get(lang, 'Score')}: {score} ✅\n"
-                scorers = match.get('scorers')
-                if scorers:
-                    text += f"⚽ {scorers.get(lang, scorers.get('en', ''))}\n"
+            live = _fetch_score_espn(match['espn_date'], match['opponent']['en'])
+            if live:
+                text += f"{score_labels.get(lang, 'Score')}: {live} ✅\n"
             else:
                 text += f"{played_labels.get(lang, played_labels['en'])}\n"
         text += "\n"
