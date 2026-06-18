@@ -52,7 +52,13 @@ MATCHES = [
         "opponent": {"uz": "Kolumbiya", "ru": "Колумбия", "en": "Colombia"},
         "flag": "🇨🇴",
         "city": {"uz": "Mexico-siti", "ru": "Мехико", "en": "Mexico City"},
-        "stadium": "Estadio Azteca",
+        "stadium": "Estadio Banorte",
+        "score": "1:3",
+        "scorers": {
+            "uz": "Fayzullayev 60' (O'zbekiston); Muñoz 40', L.Díaz 65', Campaz 90'+9' (Kolumbiya)",
+            "ru": "Файзуллаев 60' (Узбекистан); Muñoz 40', L.Díaz 65', Campaz 90'+9' (Колумбия)",
+            "en": "Fayzullaev 60' (Uzbekistan); Muñoz 40', L.Díaz 65', Campaz 90'+9' (Colombia)",
+        },
     },
     {
         "uzt_date": "2026-06-23", "uzt_time": "22:00",
@@ -61,6 +67,8 @@ MATCHES = [
         "flag": "🇵🇹",
         "city": {"uz": "Hyuston", "ru": "Хьюстон", "en": "Houston"},
         "stadium": "NRG Stadium",
+        "score": None,
+        "scorers": None,
     },
     {
         "uzt_date": "2026-06-28", "uzt_time": "04:30",
@@ -69,6 +77,8 @@ MATCHES = [
         "flag": "🇨🇩",
         "city": {"uz": "Atlanta", "ru": "Атланта", "en": "Atlanta"},
         "stadium": "Mercedes-Benz Stadium",
+        "score": None,
+        "scorers": None,
     },
 ]
 
@@ -157,12 +167,20 @@ def build_schedule_text(lang: str) -> str:
         if days_until > 0:
             text += f"{_days_left_label(days_until, lang)}\n"
         elif days_until == 0:
-            text += f"{today_labels.get(lang, today_labels['en'])}\n"
+            # Try live score first, fall back to today label
+            live = _fetch_score_espn(match['espn_date'], match['opponent']['en'])
+            if live:
+                text += f"{score_labels.get(lang, 'Score')}: {live}\n"
+            else:
+                text += f"{today_labels.get(lang, today_labels['en'])}\n"
         else:
-            # Try live score from ESPN
-            score = _fetch_score_espn(match['espn_date'], match['opponent']['en'])
+            # Played — prefer hardcoded score, fall back to ESPN
+            score = match.get('score') or _fetch_score_espn(match['espn_date'], match['opponent']['en'])
             if score:
-                text += f"{score_labels.get(lang, 'Score')}: {score}\n"
+                text += f"{score_labels.get(lang, 'Score')}: {score} ✅\n"
+                scorers = match.get('scorers')
+                if scorers:
+                    text += f"⚽ {scorers.get(lang, scorers.get('en', ''))}\n"
             else:
                 text += f"{played_labels.get(lang, played_labels['en'])}\n"
         text += "\n"
@@ -463,10 +481,20 @@ def _build_ai_facts():
     # --- MATCHES & LIVE DATA ---
     lines.append("=== MATCHES (Group K, all times UZT / Tashkent GMT+5) ===")
     for m in MATCHES:
+        status = f"RESULT: UZB {m['score']} {m['opponent']['en']}" if m.get('score') else "upcoming"
         lines.append(
             f"- {m['uzt_date']} {m['uzt_time']} UZT: UZB vs {m['opponent']['en']} "
-            f"at {m['stadium']}, {m['city']['en']}"
+            f"at {m['stadium']}, {m['city']['en']} [{status}]"
         )
+        if m.get('scorers'):
+            lines.append(f"  Scorers: {m['scorers']['en']}")
+    lines.append("")
+    lines.append("MATCH SUMMARY — Colombia 3:1 Uzbekistan (June 18, 2026):")
+    lines.append("- Final score: Colombia 3, Uzbekistan 1")
+    lines.append("- Uzbekistan's goal: Abbosbek Fayzullaev 60'")
+    lines.append("- Colombia's goals: Daniel Mu\u00f1oz 40', Luis D\u00edaz 65', J\u00e1minton Campaz 90'+9'")
+    lines.append("- Attendance: 80,824 at Estadio Banorte, Mexico City")
+    lines.append("- Uzbekistan need a result vs Portugal (Jun 23) to stay in contention for Round of 16")
     lines.append("")
     lines.append("=== LIVE SCORES & STANDINGS ===")
     lines.append(_fetch_wc2026_live_data())
