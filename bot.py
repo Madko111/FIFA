@@ -418,6 +418,61 @@ def _fetch_wc2026_all_teams() -> str:
         return f"(standings fetch error: {e})"
 
 
+GROUP_K_FLAGS = {
+    "Colombia": "🇨🇴", "Portugal": "🇵🇹", "Uzbekistan": "🇺🇿", "Congo DR": "🇨🇩",
+    "DR Congo": "🇨🇩", "Rep. Congo": "🇨🇩",
+}
+
+def build_group_k_table(lang: str = "en") -> str:
+    """Build a live Group K standings HTML table using Telegram's <blockquote>+<pre> formatting."""
+    import requests as _req
+    headers = {"uz": "K GURUH JADVALI", "ru": "ГРУППА K — ТАБЛИЦА", "en": "GROUP K STANDINGS"}
+    try:
+        url = "https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"
+        resp = _req.get(url, timeout=8)
+        if resp.status_code != 200:
+            return f"<b>{headers.get(lang, 'GROUP K STANDINGS')}</b>\n(data unavailable)"
+        groups = resp.json().get('children', [])
+        group_k = next((g for g in groups if g.get('name', '').upper() in ('GROUP K', 'K')), None)
+        if not group_k:
+            return f"<b>{headers.get(lang, 'GROUP K STANDINGS')}</b>\n(Group K not found)"
+
+        rows = []
+        for entry in group_k.get('standings', {}).get('entries', []):
+            team = entry.get('team', {}).get('displayName', '')
+            abbr = entry.get('team', {}).get('abbreviation', team[:3].upper())
+            stats = {s['name']: s.get('value', 0) for s in entry.get('stats', [])}
+            rows.append({
+                'team': team, 'abbr': abbr,
+                'flag': GROUP_K_FLAGS.get(team, '🏴'),
+                'w': int(stats.get('wins', 0)),
+                'd': int(stats.get('ties', 0)),
+                'l': int(stats.get('losses', 0)),
+                'gf': int(stats.get('pointsFor', 0)),
+                'ga': int(stats.get('pointsAgainst', 0)),
+                'pts': int(stats.get('points', 0)),
+            })
+        rows.sort(key=lambda r: (-r['pts'], -(r['gf'] - r['ga']), -r['gf']))
+
+        # Build HTML table
+        title = headers.get(lang, headers['en'])
+        lines = [f"<b>{title}</b>\n"]
+        lines.append("<pre>")
+        lines.append(f"{'#':<2} {'Team':<12} {'P':>2} {'W':>2} {'D':>2} {'L':>2} {'GD':>4} {'Pts':>4}")
+        lines.append("─" * 34)
+        for i, r in enumerate(rows, 1):
+            played = r['w'] + r['d'] + r['l']
+            gd = r['gf'] - r['ga']
+            gd_str = f"+{gd}" if gd > 0 else str(gd)
+            flag = r['flag']
+            name = r['team'][:11]
+            lines.append(f"{i:<2} {flag}{name:<11} {played:>2} {r['w']:>2} {r['d']:>2} {r['l']:>2} {gd_str:>4} {r['pts']:>4}")
+        lines.append("</pre>")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"<b>{headers.get(lang, 'GROUP K STANDINGS')}</b>\n(error: {e})"
+
+
 def _fetch_wc2026_live_data() -> str:
     """Fetch live Group K standings + recent Uzbekistan match scores from ESPN."""
     import requests as _req
@@ -814,6 +869,16 @@ async def players_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_players_menu(lang)
     )
 
+async def standings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show live Group K standings table"""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'en'
+    await update.message.reply_text(
+        build_group_k_table(lang),
+        parse_mode='HTML'
+    )
+
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /ask <вопрос> — разовый AI-вопрос."""
     user_id = update.effective_user.id
@@ -1009,8 +1074,12 @@ async def _handle_button(query):
     # Таблица
     elif query.data == "standings":
         await query.edit_message_text(
-            get_text(lang, 'standings_title'),
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(get_text(lang, 'back'), callback_data="main_menu")]])
+            build_group_k_table(lang),
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Refresh", callback_data="standings")],
+                [InlineKeyboardButton(get_text(lang, 'back'), callback_data="main_menu")]
+            ])
         )
     
     # Watch Party
@@ -1229,6 +1298,7 @@ def main():
     app.add_handler(CommandHandler("matches", matches_command))
     app.add_handler(CommandHandler("watchparty", watchparty_command))
     app.add_handler(CommandHandler("players", players_command))
+    app.add_handler(CommandHandler("standings", standings_command))
     app.add_handler(CommandHandler("ask", ask_command))
     
     # Кнопки
