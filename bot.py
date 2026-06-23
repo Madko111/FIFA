@@ -899,6 +899,81 @@ async def standings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML'
     )
 
+MATCHDAY_EVENTS = [
+    {
+        "city": {"uz": "Atlanta", "ru": "Атланта", "en": "Atlanta"},
+        "flag": "🇺🇸",
+        "name": "World Cup Watch Party — Congo vs Uzbekistan",
+        "venue": "Level III Cuisine and Bar, Atlanta",
+        "date": {"uz": "Shanba, 27-iyun · 18:00 (Atlanta vaqti)", "ru": "Суббота, 27 июня · 18:00 (Atlanta)", "en": "Sat Jun 27 · 6:00 PM (Atlanta)"},
+        "price": {"uz": "Bepul", "ru": "Бесплатно", "en": "Free"},
+        "link": "https://www.eventbrite.com/e/world-cup-watch-party-congo-vs-uzbekistan-tickets-1992189110257",
+    },
+    {
+        "city": {"uz": "Atlanta", "ru": "Атланта", "en": "Atlanta"},
+        "flag": "🇺🇸",
+        "name": "Gameday Goal Zone — Pre-Game Party Uzbekistan vs DRC",
+        "venue": "547 Mitchell St SW, Atlanta",
+        "date": {"uz": "Shanba, 27-iyun · 15:30 (Atlanta vaqti)", "ru": "Суббота, 27 июня · 15:30 (Atlanta)", "en": "Sat Jun 27 · 3:30 PM (Atlanta)"},
+        "price": {"uz": "$54 dan", "ru": "от $54", "en": "from $54"},
+        "link": "https://www.eventbrite.com/e/gameday-goal-zone-atlanta-pre-game-party-uzbekistan-vs-drc-tickets-1992386231853",
+    },
+    {
+        "city": {"uz": "Atlanta", "ru": "Атланта", "en": "Atlanta"},
+        "flag": "🇺🇸",
+        "name": "One World Fan Village — DR Congo vs Uzbekistan",
+        "venue": "432 Beckwith Ct SW, Atlanta",
+        "date": {"uz": "Shanba, 27-iyun · 14:00 (Atlanta vaqti)", "ru": "Суббота, 27 июня · 14:00 (Atlanta)", "en": "Sat Jun 27 · 2:00 PM (Atlanta)"},
+        "price": {"uz": "Bepul", "ru": "Бесплатно", "en": "Free"},
+        "link": "https://www.eventbrite.com/e/one-world-fan-village-atl-dr-congo-vs-uzbekistan-62726-tickets-1991518053107",
+    },
+    {
+        "city": {"uz": "Hyuston", "ru": "Хьюстон", "en": "Houston"},
+        "flag": "🇺🇸",
+        "name": "Congo DR vs Uzbekistan Watch Party Houston",
+        "venue": "Social Beer Garden HTX, 3101 San Jacinto St",
+        "date": {"uz": "Shanba, 27-iyun · 17:30 (Hyuston vaqti)", "ru": "Суббота, 27 июня · 17:30 (Хьюстон)", "en": "Sat Jun 27 · 5:30 PM (Houston)"},
+        "price": {"uz": "Bepul", "ru": "Бесплатно", "en": "Free"},
+        "link": "https://www.eventbrite.com/e/congo-dr-vs-uzbekistan-world-cup-watch-party-in-houston-tickets-1990679495960",
+    },
+]
+
+def build_events_text(lang: str) -> str:
+    headers = {
+        "uz": "🎉 27-IYUN — O'YIN KUNI TADBIRLARI\n\nKongo DR vs O'zbekiston uchun rasmiy tadbirlar:\n\n",
+        "ru": "🎉 27 ИЮНЯ — СОБЫТИЯ МАТЧ-ДНЯ\n\nОфициальные события для матча Конго ДР vs Узбекистан:\n\n",
+        "en": "🎉 JUNE 27 — MATCH DAY EVENTS\n\nOfficial events for Congo DR vs Uzbekistan:\n\n",
+    }
+    text = headers.get(lang, headers['en'])
+    for i, ev in enumerate(MATCHDAY_EVENTS, 1):
+        city = ev['city'].get(lang, ev['city']['en'])
+        date = ev['date'].get(lang, ev['date']['en'])
+        price = ev['price'].get(lang, ev['price']['en'])
+        text += f"{i}. 📍 {ev['flag']} {city}\n"
+        text += f"*{ev['name']}*\n"
+        text += f"🏟 {ev['venue']}\n"
+        text += f"🕐 {date}\n"
+        text += f"🎫 {price}\n"
+        text += f"🔗 {ev['link']}\n\n"
+    footer = {
+        "uz": "Siz ham tomosha davrasini oching 👉 uzbekworldclub.com/where-we-watch",
+        "ru": "Откройте свою давру 👉 uzbekworldclub.com/where-we-watch",
+        "en": "Open your own davra 👉 uzbekworldclub.com/where-we-watch",
+    }
+    text += footer.get(lang, footer['en'])
+    return text
+
+async def events_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show match day events for Jun 27"""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+    await update.message.reply_text(
+        build_events_text(lang),
+        parse_mode='Markdown',
+        disable_web_page_preview=True,
+    )
+
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /ask <вопрос> — разовый AI-вопрос."""
     user_id = update.effective_user.id
@@ -1360,6 +1435,7 @@ def main():
     app.add_handler(CommandHandler("watchparty", watchparty_command))
     app.add_handler(CommandHandler("players", players_command))
     app.add_handler(CommandHandler("standings", standings_command))
+    app.add_handler(CommandHandler("events", events_command))
     app.add_handler(CommandHandler("ask", ask_command))
     
     # Кнопки
