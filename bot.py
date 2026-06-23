@@ -67,8 +67,12 @@ MATCHES = [
         "flag": "🇵🇹",
         "city": {"uz": "Hyuston", "ru": "Хьюстон", "en": "Houston"},
         "stadium": "NRG Stadium",
-        "score": None,
-        "scorers": None,
+        "score": "0:5",
+        "scorers": {
+            "uz": "Ronaldo 6', 39', Nuno Mendes 17', Nematov 60' (o'z darvoza), Leão 87' (Portugaliya)",
+            "ru": "Ronaldo 6', 39', Nuno Mendes 17', Нематов 60' (автогол), Leão 87' (Португалия)",
+            "en": "Ronaldo 6', 39', Nuno Mendes 17', Nematov 60' (OG), Leão 87' (Portugal)",
+        },
     },
     {
         "uzt_date": "2026-06-28", "uzt_time": "04:30",
@@ -79,6 +83,11 @@ MATCHES = [
         "stadium": "Mercedes-Benz Stadium",
         "score": None,
         "scorers": None,
+        "note": {
+            "uz": "⚠️ Guruhda qolish uchun g'alaba shart!",
+            "ru": "⚠️ Нужна победа для шанса на плей-офф!",
+            "en": "⚠️ Must win to have any chance of advancing!",
+        },
     },
 ]
 
@@ -170,9 +179,13 @@ def build_schedule_text(lang: str) -> str:
             scorers = match.get('scorers')
             if scorers:
                 text += f"⚽ {scorers.get(lang, scorers.get('en', ''))}\n"
-        elif days_until > 0:
+        # Show match-specific note (e.g. "must win")
+        note = match.get('note')
+        if note and not match.get('score'):
+            text += f"{note.get(lang, note.get('en', ''))}\n"
+        if days_until > 0 and not match.get('score'):
             text += f"{_days_left_label(days_until, lang)}\n"
-        elif days_until == 0:
+        elif days_until == 0 and not match.get('score'):
             live = _fetch_score_espn(match['espn_date'], match['opponent']['en'])
             if live:
                 text += f"{score_labels.get(lang, 'Score')}: {live}\n"
@@ -545,12 +558,18 @@ def _build_ai_facts():
         if m.get('scorers'):
             lines.append(f"  Scorers: {m['scorers']['en']}")
     lines.append("")
-    lines.append("MATCH SUMMARY — Colombia 3:1 Uzbekistan (June 18, 2026):")
-    lines.append("- Final score: Colombia 3, Uzbekistan 1")
+    lines.append("MATCH RESULTS:")
+    lines.append("Game 1 — Colombia 3:1 Uzbekistan (June 18, 2026):")
     lines.append("- Uzbekistan's goal: Abbosbek Fayzullaev 60'")
     lines.append("- Colombia's goals: Daniel Mu\u00f1oz 40', Luis D\u00edaz 65', J\u00e1minton Campaz 90'+9'")
     lines.append("- Attendance: 80,824 at Estadio Banorte, Mexico City")
-    lines.append("- Uzbekistan need a result vs Portugal (Jun 23) to stay in contention for Round of 16")
+    lines.append("")
+    lines.append("Game 2 — Portugal 5:0 Uzbekistan (June 23, 2026):")
+    lines.append("- Portugal's goals: Cristiano Ronaldo 6', 39' (brace), Nuno Mendes 17', Abduvohid Nematov 60' (OG), Rafael Leão 87'")
+    lines.append("- Attendance: 68,777 at NRG Stadium, Houston")
+    lines.append("- Uzbekistan lost both group games, 1 goal scored, 8 conceded")
+    lines.append("")
+    lines.append("SITUATION: Uzbekistan MUST beat Congo DR (Jun 28, Atlanta) to have any mathematical chance of advancing. Currently 0 points, -7 GD.")
     lines.append("")
     lines.append("=== LIVE SCORES & STANDINGS ===")
     lines.append(_fetch_wc2026_live_data())
