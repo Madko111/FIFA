@@ -53,7 +53,7 @@ MATCHES = [
         "opponent": {"uz": "Kolumbiya", "ru": "Колумбия", "en": "Colombia"},
         "flag": "🇨🇴",
         "city": {"uz": "Mexico-siti", "ru": "Мехико", "en": "Mexico City"},
-        "stadium": "Estadio Banorte",
+        "stadium": "Estadio Azteca",
         "score": "1:3",
         "scorers": {
             "uz": "Fayzullayev 60' (O'zbekiston); Muñoz 40', L.Díaz 65', Campaz 90'+9' (Kolumbiya)",
