@@ -454,20 +454,20 @@ def build_group_k_table(lang: str = "en") -> str:
             })
         rows.sort(key=lambda r: (-r['pts'], -(r['gf'] - r['ga']), -r['gf']))
 
-        # Build HTML table
+        # Build HTML list (flags break inside <pre>)
         title = headers.get(lang, headers['en'])
+        pts_label = {"uz": "uch", "ru": "очк", "en": "pts"}.get(lang, "pts")
         lines = [f"<b>{title}</b>\n"]
-        lines.append("<pre>")
-        lines.append(f"{'#':<2} {'Team':<12} {'P':>2} {'W':>2} {'D':>2} {'L':>2} {'GD':>4} {'Pts':>4}")
-        lines.append("─" * 34)
         for i, r in enumerate(rows, 1):
             played = r['w'] + r['d'] + r['l']
             gd = r['gf'] - r['ga']
             gd_str = f"+{gd}" if gd > 0 else str(gd)
-            flag = r['flag']
-            name = r['team'][:11]
-            lines.append(f"{i:<2} {flag}{name:<11} {played:>2} {r['w']:>2} {r['d']:>2} {r['l']:>2} {gd_str:>4} {r['pts']:>4}")
-        lines.append("</pre>")
+            medal = ["🥇", "🥈", "🥉", "4️⃣"][i - 1]
+            lines.append(
+                f"{medal} {r['flag']} <b>{r['team']}</b>\n"
+                f"   P:{played}  W:{r['w']} D:{r['d']} L:{r['l']}  GD:{gd_str}  <b>{r['pts']} {pts_label}</b>"
+            )
+        lines.append("")
         return "\n".join(lines)
     except Exception as e:
         return f"<b>{headers.get(lang, 'GROUP K STANDINGS')}</b>\n(error: {e})"
