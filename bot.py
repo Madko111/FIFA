@@ -38,6 +38,7 @@ AI_ENABLED = bool(GEMINI_API_KEY or ANTHROPIC_API_KEY)
 # Файлы данных
 KPI_DATA_FILE = "kpi_data.json"
 USER_SETTINGS_FILE = "user_settings.json"
+COMMUNITY_CHAT_ID = os.getenv('COMMUNITY_CHAT_ID', '@UzbekWorldClub')
 
 # ============================================
 # ДАННЫЕ
@@ -1291,6 +1292,47 @@ async def build_war_room(lang, bot=None):
     return "\n".join(lines)
 
 # ============================================
+# WATCH PARTY REMINDER
+# ============================================
+
+async def send_watch_party_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Sends a watch party reminder 2 hours before the DR Congo match."""
+    msgs = {
+        'uz': (
+            "🇺🇿🆚🇨🇩 *O'YIN 2 SOATDAN KEYIN!*\n\n"
+            "Kongo DR ga qarshi hal qiluvchi o'yin — bugun kechqurun!\n"
+            "Yaqingingizdagi tomosha davrasini toping 👇\n\n"
+            "🌐 uzbekworldclub.com/where-we-watch\n\n"
+            "Davrangizni toping va qo'shiling! 🐺🔥"
+        ),
+        'ru': (
+            "🇺🇿🆚🇨🇩 *МАТЧ ЧЕРЕЗ 2 ЧАСА!*\n\n"
+            "Решающая игра против Конго ДР — сегодня вечером!\n"
+            "Найдите ближайшую вечеринку просмотра 👇\n\n"
+            "🌐 uzbekworldclub.com/where-we-watch\n\n"
+            "Найдите свою давру и присоединяйтесь! 🐺🔥"
+        ),
+        'en': (
+            "🇺🇿🆚🇨🇩 *MATCH IN 2 HOURS!*\n\n"
+            "The must-win game against DR Congo — tonight!\n"
+            "Find your nearest watch party 👇\n\n"
+            "🌐 uzbekworldclub.com/where-we-watch\n\n"
+            "Find your davra and join the wolves! 🐺🔥"
+        ),
+    }
+    text = msgs['uz'] + "\n\n---\n" + msgs['ru'] + "\n\n---\n" + msgs['en']
+    try:
+        await context.bot.send_message(
+            chat_id=COMMUNITY_CHAT_ID,
+            text=text,
+            parse_mode="Markdown",
+        )
+        print("✅ Watch party reminder sent to community.")
+    except Exception as e:
+        print(f"❌ Watch party reminder error: {e}")
+
+
+# ============================================
 # ЗАПУСК
 # ============================================
 
@@ -1327,7 +1369,21 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
     
     print("✅ Bot ishga tushdi!\n")
-    
+
+    # Watch party reminder — Jun 27 at 21:30 UTC (2 hours before DR Congo kickoff 23:30 UTC)
+    from datetime import timezone
+    reminder_time = datetime(2026, 6, 27, 21, 30, 0, tzinfo=timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    if now_utc < reminder_time:
+        app.job_queue.run_once(
+            send_watch_party_reminder,
+            when=reminder_time,
+            name="watch_party_reminder_congo",
+        )
+        print(f"⏰ Watch party reminder scheduled for {reminder_time.isoformat()}")
+    else:
+        print("ℹ️  Watch party reminder time already passed — skipped.")
+
     # Запуск
     app.run_polling(allowed_updates=["message", "callback_query", "my_chat_member"])
 
