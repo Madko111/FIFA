@@ -858,6 +858,174 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
+async def countdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Countdown to DR Congo match"""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+
+    kickoff_utc = datetime(2026, 6, 27, 23, 30, 0)  # 7:30 PM EDT = 23:30 UTC
+    now_utc = datetime.utcnow()
+    diff = kickoff_utc - now_utc
+
+    if diff.total_seconds() <= 0:
+        msgs = {
+            'uz': "🐺 O'yin boshlandi! Kongo DR vs O'zbekiston — JONLI!",
+            'ru': "🐺 Матч начался! Конго ДР vs Узбекистан — LIVE!",
+            'en': "🐺 The match has started! Congo DR vs Uzbekistan — LIVE!",
+        }
+        await update.message.reply_text(msgs.get(lang, msgs['en']))
+        return
+
+    total_seconds = int(diff.total_seconds())
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    mins = (total_seconds % 3600) // 60
+
+    templates = {
+        'uz': (
+            "⏰ *HISOBLAGICH — KONGO DR O'YINIGA*\n\n"
+            f"🇺🇿 O'zbekiston vs 🇨🇩 Kongo DR\n"
+            f"📅 27-iyun · 23:30 UTC (19:30 Atlanta)\n"
+            f"🏟 Mercedes-Benz Stadium, Atlanta\n\n"
+            f"*{days} kun · {hours} soat · {mins} daqiqa*\n\n"
+            "⚠️ G'alaba shart — oxirgi guruh o'yini!\n"
+            "🎉 Tadbirlar: /events\n"
+            "📍 Atlanta: /atlanta"
+        ),
+        'ru': (
+            "⏰ *ОБРАТНЫЙ ОТСЧЁТ — МАТЧ С КОНГО ДР*\n\n"
+            f"🇺🇿 Узбекистан vs 🇨🇩 Конго ДР\n"
+            f"📅 27 июня · 23:30 UTC (19:30 Атланта)\n"
+            f"🏟 Mercedes-Benz Stadium, Атланта\n\n"
+            f"*{days} дн · {hours} ч · {mins} мин*\n\n"
+            "⚠️ Нужна победа — последняя игра в группе!\n"
+            "🎉 События: /events\n"
+            "📍 Атланта: /atlanta"
+        ),
+        'en': (
+            "⏰ *COUNTDOWN — DR CONGO MATCH*\n\n"
+            f"🇺🇿 Uzbekistan vs 🇨🇩 DR Congo\n"
+            f"📅 Jun 27 · 23:30 UTC (7:30 PM EDT Atlanta)\n"
+            f"🏟 Mercedes-Benz Stadium, Atlanta\n\n"
+            f"*{days} days · {hours} hrs · {mins} min*\n\n"
+            "⚠️ Must win — last group game!\n"
+            "🎉 Events: /events\n"
+            "📍 Atlanta guide: /atlanta"
+        ),
+    }
+    await update.message.reply_text(
+        templates.get(lang, templates['en']),
+        parse_mode='Markdown'
+    )
+
+async def atlanta_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fan guide for Atlanta — Jun 27"""
+    user_id = update.effective_user.id
+    track_user_interaction(user_id)
+    lang = get_user_language(user_id) or 'uz'
+
+    guides = {
+        'uz': (
+            "📍 *ATLANTA — MUXLIS QO'LLANMASI*\n"
+            "🗓 27-iyun · Kongo DR vs O'zbekiston\n\n"
+
+            "🏟 *Stadion*\n"
+            "Mercedes-Benz Stadium\n"
+            "1 AMB Dr NW, Atlanta, GA 30313\n"
+            "🚇 Metrodan: MARTA — Vine City yoki CNN Center\n\n"
+
+            "🌤 *Ob-havo (27-iyun)*\n"
+            "⛅ 26°C · Qisman bulutli\n\n"
+
+            "🅿️ *Parking*\n"
+            "Rasmiy: $39 dan · https://www.eventbrite.com/e/dr-congo-vs-uzbekistan-fifa-world-cup-2026tm-match-day-parking-tickets-1992018664449\n\n"
+
+            "🎉 *Fan Village*\n"
+            "One World Fan Village · 432 Beckwith Ct SW\n"
+            "14:00 dan (sotildi — ko'rish uchun boring)\n\n"
+
+            "🍽 *Yaqin o'zbek restoranlari*\n"
+            "• Chai House Atlanta — 6125 Roswell Rd NE\n"
+            "• Pita Mediterranean · 1049 Peachtree St NE\n"
+            "• Zesto Atlanta · 377 Moreland Ave (choyxona muhiti)\n\n"
+
+            "⚽ *Match kuni tadbirlar*\n"
+            "• Pre-game: Gameday Goal Zone · 15:30 · $54\n"
+            "• Watch party: Level III · 18:00 · Bepul\n"
+            "Batafsil: /events\n\n"
+
+            "🌐 uzbekworldclub.com/where-we-watch"
+        ),
+        'ru': (
+            "📍 *АТЛАНТА — ГАЙД ДЛЯ БОЛЕЛЬЩИКОВ*\n"
+            "🗓 27 июня · Конго ДР vs Узбекистан\n\n"
+
+            "🏟 *Стадион*\n"
+            "Mercedes-Benz Stadium\n"
+            "1 AMB Dr NW, Atlanta, GA 30313\n"
+            "🚇 Метро: MARTA — Vine City или CNN Center\n\n"
+
+            "🌤 *Погода (27 июня)*\n"
+            "⛅ 26°C · Переменная облачность\n\n"
+
+            "🅿️ *Парковка*\n"
+            "Официальная: от $39 · https://www.eventbrite.com/e/dr-congo-vs-uzbekistan-fifa-world-cup-2026tm-match-day-parking-tickets-1992018664449\n\n"
+
+            "🎉 *Фан-зона*\n"
+            "One World Fan Village · 432 Beckwith Ct SW\n"
+            "С 14:00 (распродано — зайдите посмотреть)\n\n"
+
+            "🍽 *Рестораны рядом*\n"
+            "• Chai House Atlanta — 6125 Roswell Rd NE\n"
+            "• Pita Mediterranean · 1049 Peachtree St NE\n"
+            "• Zesto Atlanta · 377 Moreland Ave\n\n"
+
+            "⚽ *События матч-дня*\n"
+            "• Pre-game: Gameday Goal Zone · 15:30 · от $54\n"
+            "• Watch party: Level III · 18:00 · Бесплатно\n"
+            "Подробнее: /events\n\n"
+
+            "🌐 uzbekworldclub.com/where-we-watch"
+        ),
+        'en': (
+            "📍 *ATLANTA — FAN GUIDE*\n"
+            "🗓 Jun 27 · Congo DR vs Uzbekistan\n\n"
+
+            "🏟 *Stadium*\n"
+            "Mercedes-Benz Stadium\n"
+            "1 AMB Dr NW, Atlanta, GA 30313\n"
+            "🚇 Metro: MARTA — Vine City or CNN Center station\n\n"
+
+            "🌤 *Weather (Jun 27)*\n"
+            "⛅ 26°C / 79°F · Partly cloudy\n\n"
+
+            "🅿️ *Parking*\n"
+            "Official parking: from $39 · https://www.eventbrite.com/e/dr-congo-vs-uzbekistan-fifa-world-cup-2026tm-match-day-parking-tickets-1992018664449\n\n"
+
+            "🎉 *Fan Village*\n"
+            "One World Fan Village · 432 Beckwith Ct SW\n"
+            "From 2:00 PM (sold out — still worth visiting)\n\n"
+
+            "🍽 *Restaurants nearby*\n"
+            "• Chai House Atlanta — 6125 Roswell Rd NE\n"
+            "• Pita Mediterranean · 1049 Peachtree St NE\n"
+            "• Zesto Atlanta · 377 Moreland Ave\n\n"
+
+            "⚽ *Match day events*\n"
+            "• Pre-game: Gameday Goal Zone · 3:30 PM · from $54\n"
+            "• Watch party: Level III · 6:00 PM · Free\n"
+            "Full list: /events\n\n"
+
+            "🌐 uzbekworldclub.com/where-we-watch"
+        ),
+    }
+    await update.message.reply_text(
+        guides.get(lang, guides['en']),
+        parse_mode='Markdown',
+        disable_web_page_preview=True,
+    )
+
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Расписание"""
     user_id = update.effective_user.id
@@ -1436,6 +1604,8 @@ def main():
     app.add_handler(CommandHandler("players", players_command))
     app.add_handler(CommandHandler("standings", standings_command))
     app.add_handler(CommandHandler("events", events_command))
+    app.add_handler(CommandHandler("countdown", countdown_command))
+    app.add_handler(CommandHandler("atlanta", atlanta_command))
     app.add_handler(CommandHandler("ask", ask_command))
     
     # Кнопки
